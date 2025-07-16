@@ -593,7 +593,84 @@ const App = () => {
     }
   }, [addLogEntry, getRetryDelay, checkWebSocketBackpressure]);
 
+  // Handle messages from AudioWorklet (moved up to fix dependency order)
+  const handleAudioWorkletMessage = useCallback((event) => {
+    const { type, data } = event.data;
+    
+    switch (type) {
+      case 'AUDIO_DATA':
+        sendAudioChunkWithBackpressure(data.audioData);
+        break;
+        
+      case 'BARGE_IN_DETECTED':
+        if (isPlayingRef.current) {
+          addLogEntry(
+            "barge_in", 
+            `User speech detected during playback (amplitude: ${data.maxAmplitude.toFixed(3)})`
+          );
+          stopSystemAudioPlayback();
+        }
+        break;
+        
+      case 'METRICS':
+        audioMetricsRef.current = { ...audioMetricsRef.current, ...data };
+        break;
+        
+      default:
+        console.log('Unknown AudioWorklet message:', type, data);
+    }
+  }, [addLogEntry, stopSystemAudioPlayback, sendAudioChunkWithBackpressure]);
 
+  // Initialize AudioWorklet for modern audio processing (moved up to fix dependency order)
+  const initializeAudioWorklet = useCallback(async () => {
+    try {
+      if (localAudioContextRef.current && localAudioContextRef.current.state === "closed") {
+        localAudioContextRef.current = null;
+      }
+      
+      if (!localAudioContextRef.current) {
+        localAudioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({
+          sampleRate: INPUT_SAMPLE_RATE
+        });
+        
+        // Set up state monitoring for the new context
+        monitorAudioContextState(localAudioContextRef.current, 'LocalAudioContext');
+      }
+      
+      // Load AudioWorklet module
+      await localAudioContextRef.current.audioWorklet.addModule(AUDIO_WORKLET_URL);
+      
+      // Create AudioWorklet node
+      audioWorkletNodeRef.current = new AudioWorkletNode(
+        localAudioContextRef.current,
+        'audio-processor'
+      );
+      
+      // Set up message handling
+      audioWorkletNodeRef.current.port.onmessage = handleAudioWorkletMessage;
+      
+      addLogEntry("mic", "AudioWorklet initialized successfully");
+      return true;
+    } catch (error) {
+      addLogEntry("error", `Failed to initialize AudioWorklet: ${error.message}`);
+      console.error("AudioWorklet initialization error:", error);
+      return false;
+    }
+  }, [addLogEntry, handleAudioWorkletMessage, monitorAudioContextState]);
+
+  // Fallback ScriptProcessorNode implementation (moved up to fix dependency order)
+  const initializeScriptProcessorFallback = useCallback(() => {
+    try {
+      addLogEntry("info", "Initializing ScriptProcessorNode fallback");
+      // This would implement the old ScriptProcessorNode approach if needed
+      // For now, we'll indicate that fallback is not implemented
+      addLogEntry("error", "ScriptProcessorNode fallback not implemented - please use a modern browser");
+      return false;
+    } catch (error) {
+      addLogEntry("error", `ScriptProcessorNode fallback failed: ${error.message}`);
+      return false;
+    }
+  }, [addLogEntry]);
 
   // Check AudioWorklet support with fallback
   const checkAudioWorkletSupport = useCallback(async () => {
@@ -632,19 +709,6 @@ const App = () => {
     }
   }, [addLogEntry, checkAudioWorkletSupport, initializeAudioWorklet, initializeScriptProcessorFallback]);
 
-  // Fallback ScriptProcessorNode implementation
-  const initializeScriptProcessorFallback = useCallback(() => {
-    try {
-      addLogEntry("info", "Initializing ScriptProcessorNode fallback");
-      // This would implement the old ScriptProcessorNode approach if needed
-      // For now, we'll indicate that fallback is not implemented
-      addLogEntry("error", "ScriptProcessorNode fallback not implemented - please use a modern browser");
-      return false;
-    } catch (error) {
-      addLogEntry("error", `ScriptProcessorNode fallback failed: ${error.message}`);
-      return false;
-    }
-  }, [addLogEntry]);
 
 
   // Enhanced audio chunk sender with retry logic
@@ -703,70 +767,7 @@ const App = () => {
     return () => clearInterval(interval);
   }, [processPendingAudioChunks]);
 
-  // Handle messages from AudioWorklet
-  const handleAudioWorkletMessage = useCallback((event) => {
-    const { type, data } = event.data;
-    
-    switch (type) {
-      case 'AUDIO_DATA':
-        sendAudioChunkWithBackpressure(data.audioData);
-        break;
-        
-      case 'BARGE_IN_DETECTED':
-        if (isPlayingRef.current) {
-          addLogEntry(
-            "barge_in", 
-            `User speech detected during playback (amplitude: ${data.maxAmplitude.toFixed(3)})`
-          );
-          stopSystemAudioPlayback();
-        }
-        break;
-        
-      case 'METRICS':
-        audioMetricsRef.current = { ...audioMetricsRef.current, ...data };
-        break;
-        
-      default:
-        console.log('Unknown AudioWorklet message:', type, data);
-    }
-  }, [addLogEntry, stopSystemAudioPlayback, sendAudioChunkWithBackpressure]);
 
-  // Initialize AudioWorklet for modern audio processing
-  const initializeAudioWorklet = useCallback(async () => {
-    try {
-      if (localAudioContextRef.current && localAudioContextRef.current.state === "closed") {
-        localAudioContextRef.current = null;
-      }
-      
-      if (!localAudioContextRef.current) {
-        localAudioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({
-          sampleRate: INPUT_SAMPLE_RATE
-        });
-        
-        // Set up state monitoring for the new context
-        monitorAudioContextState(localAudioContextRef.current, 'LocalAudioContext');
-      }
-      
-      // Load AudioWorklet module
-      await localAudioContextRef.current.audioWorklet.addModule(AUDIO_WORKLET_URL);
-      
-      // Create AudioWorklet node
-      audioWorkletNodeRef.current = new AudioWorkletNode(
-        localAudioContextRef.current,
-        'audio-processor'
-      );
-      
-      // Set up message handling
-      audioWorkletNodeRef.current.port.onmessage = handleAudioWorkletMessage;
-      
-      addLogEntry("mic", "AudioWorklet initialized successfully");
-      return true;
-    } catch (error) {
-      addLogEntry("error", `Failed to initialize AudioWorklet: ${error.message}`);
-      console.error("AudioWorklet initialization error:", error);
-      return false;
-    }
-  }, [addLogEntry, handleAudioWorkletMessage, monitorAudioContextState]);
 
   const handleStartListening = useCallback(
     async (isResuming = false) => {
@@ -879,7 +880,7 @@ const App = () => {
       setIsRecording(true);
       addLogEntry("mic_status", "Microphone is NOW actively sending data.");
     },
-    [addLogEntry, initializeAudioWorklet, getPlaybackAudioContext]
+    [addLogEntry, initializeAudioWorkletWithFallback, getPlaybackAudioContext]
   );
 
   const handlePauseListening = useCallback(() => {
