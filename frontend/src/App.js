@@ -204,6 +204,110 @@ const App = () => {
       chatAreaRef.current.scrollTop = chatAreaRef.current.scrollHeight;
   }, [transcriptionMessages]);
 
+  // Recover suspended AudioContext (moved up to fix dependency order)
+  const recoverAudioContext = useCallback(async (context, contextName) => {
+    if (!context || context.state === 'closed') return false;
+    
+    if (audioContextRecoveryAttempts.current >= MAX_AUDIO_CONTEXT_RECOVERY_ATTEMPTS) {
+      addLogEntry("error", `${contextName} recovery failed after ${MAX_AUDIO_CONTEXT_RECOVERY_ATTEMPTS} attempts`);
+      return false;
+    }
+
+    audioContextRecoveryAttempts.current++;
+    
+    try {
+      if (context.state === 'suspended') {
+        addLogEntry("info", `Attempting to resume ${contextName} (attempt ${audioContextRecoveryAttempts.current})`);
+        await context.resume();
+        
+        if (context.state === 'running') {
+          addLogEntry("success", `${contextName} successfully resumed`);
+          audioContextRecoveryAttempts.current = 0;
+          return true;
+        }
+      }
+    } catch (error) {
+      addLogEntry("error", `Failed to resume ${contextName}: ${error.message}`);
+    }
+
+    // Schedule another recovery attempt
+    if (audioContextRecoveryAttempts.current < MAX_AUDIO_CONTEXT_RECOVERY_ATTEMPTS) {
+      const delay = AUDIO_CONTEXT_RECOVERY_DELAY * audioContextRecoveryAttempts.current;
+      setTimeout(() => {
+        recoverAudioContext(context, contextName);
+      }, delay);
+    }
+    
+    return false;
+  }, [addLogEntry]);
+
+  // Reinitialize AudioContext when closed (moved up to fix dependency order)
+  const reinitializeAudioContext = useCallback(async () => {
+    if (!isSessionActiveRef.current) return;
+
+    addLogEntry("info", "Reinitializing AudioContext after closure");
+    
+    try {
+      // Clean up existing context
+      if (localAudioContextRef.current) {
+        if (audioWorkletNodeRef.current) {
+          audioWorkletNodeRef.current.disconnect();
+          audioWorkletNodeRef.current = null;
+        }
+        localAudioContextRef.current = null;
+      }
+
+      // Restart audio processing
+      if (mediaStreamRef.current && isRecordingRef.current) {
+        addLogEntry("info", "Restarting audio processing after context recovery");
+        // Use setTimeout to avoid dependency issues during recovery
+        setTimeout(() => {
+          handleStartListening(true); // Resume listening
+        }, 100);
+      }
+    } catch (error) {
+      addLogEntry("error", `AudioContext reinitialization failed: ${error.message}`);
+      setIsSessionActive(false);
+    }
+  }, [addLogEntry]);
+
+  // AudioContext state monitoring and recovery (moved up to fix dependency order)
+  const monitorAudioContextState = useCallback((context, contextName) => {
+    if (!context) return;
+
+    const handleStateChange = () => {
+      const state = context.state;
+      addLogEntry("audio_context", `${contextName} state changed to: ${state}`);
+      
+      if (state === 'suspended') {
+        addLogEntry("warning", `${contextName} suspended - attempting recovery`);
+        recoverAudioContext(context, contextName);
+      } else if (state === 'interrupted') {
+        addLogEntry("warning", `${contextName} interrupted - scheduling recovery`);
+        setTimeout(() => {
+          recoverAudioContext(context, contextName);
+        }, AUDIO_CONTEXT_RECOVERY_DELAY);
+      } else if (state === 'closed') {
+        addLogEntry("error", `${contextName} closed - reinitializing required`);
+        if (contextName === 'LocalAudioContext' && isRecordingRef.current) {
+          // Use setTimeout to avoid dependency issues
+          setTimeout(() => {
+            reinitializeAudioContext();
+          }, 100);
+        }
+      } else if (state === 'running') {
+        addLogEntry("success", `${contextName} successfully running`);
+        audioContextRecoveryAttempts.current = 0; // Reset recovery attempts on success
+      }
+    };
+
+    context.addEventListener('statechange', handleStateChange);
+    
+    return () => {
+      context.removeEventListener('statechange', handleStateChange);
+    };
+  }, [addLogEntry, isRecording]);
+
   const getPlaybackAudioContext = useCallback(
     async (triggeredByAction) => {
       if (
@@ -266,7 +370,7 @@ const App = () => {
         );
       return playbackAudioContextRef.current;
     },
-    [addLogEntry]
+    [addLogEntry, monitorAudioContextState]
   );
 
   const playNextGeminiChunk = useCallback(async () => {
@@ -421,6 +525,17 @@ const App = () => {
     addLogEntry("gemini_audio", "Gemini audio queue cleared due to barge-in.");
   }, [addLogEntry]);
 
+  // WebSocket backpressure handling (moved up to fix dependency order)
+  const checkWebSocketBackpressure = useCallback(() => {
+    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    
+    // Check if WebSocket send buffer is getting full
+    const sendBufferSize = socketRef.current.bufferedAmount || 0;
+    return sendBufferSize > WEBSOCKET_SEND_BUFFER_LIMIT;
+  }, []);
+
   // Exponential backoff delay function
   const getRetryDelay = useCallback((attempt) => {
     return RETRY_DELAY_BASE * Math.pow(2, attempt) + Math.random() * 100; // Add jitter
@@ -478,99 +593,7 @@ const App = () => {
     }
   }, [addLogEntry, getRetryDelay, checkWebSocketBackpressure]);
 
-  // AudioContext state monitoring and recovery
-  const monitorAudioContextState = useCallback((context, contextName) => {
-    if (!context) return;
 
-    const handleStateChange = () => {
-      const state = context.state;
-      addLogEntry("audio_context", `${contextName} state changed to: ${state}`);
-      
-      if (state === 'suspended') {
-        addLogEntry("warning", `${contextName} suspended - attempting recovery`);
-        recoverAudioContext(context, contextName);
-      } else if (state === 'interrupted') {
-        addLogEntry("warning", `${contextName} interrupted - scheduling recovery`);
-        setTimeout(() => recoverAudioContext(context, contextName), AUDIO_CONTEXT_RECOVERY_DELAY);
-      } else if (state === 'closed') {
-        addLogEntry("error", `${contextName} closed - reinitializing required`);
-        if (contextName === 'LocalAudioContext' && isRecording) {
-          reinitializeAudioContext();
-        }
-      } else if (state === 'running') {
-        addLogEntry("success", `${contextName} successfully running`);
-        audioContextRecoveryAttempts.current = 0; // Reset recovery attempts on success
-      }
-    };
-
-    context.addEventListener('statechange', handleStateChange);
-    
-    return () => {
-      context.removeEventListener('statechange', handleStateChange);
-    };
-  }, [addLogEntry, isRecording]);
-
-  // Recover suspended AudioContext
-  const recoverAudioContext = useCallback(async (context, contextName) => {
-    if (!context || context.state === 'closed') return false;
-    
-    if (audioContextRecoveryAttempts.current >= MAX_AUDIO_CONTEXT_RECOVERY_ATTEMPTS) {
-      addLogEntry("error", `${contextName} recovery failed after ${MAX_AUDIO_CONTEXT_RECOVERY_ATTEMPTS} attempts`);
-      return false;
-    }
-
-    audioContextRecoveryAttempts.current++;
-    
-    try {
-      if (context.state === 'suspended') {
-        addLogEntry("info", `Attempting to resume ${contextName} (attempt ${audioContextRecoveryAttempts.current})`);
-        await context.resume();
-        
-        if (context.state === 'running') {
-          addLogEntry("success", `${contextName} successfully resumed`);
-          audioContextRecoveryAttempts.current = 0;
-          return true;
-        }
-      }
-    } catch (error) {
-      addLogEntry("error", `Failed to resume ${contextName}: ${error.message}`);
-    }
-
-    // Schedule another recovery attempt
-    if (audioContextRecoveryAttempts.current < MAX_AUDIO_CONTEXT_RECOVERY_ATTEMPTS) {
-      const delay = AUDIO_CONTEXT_RECOVERY_DELAY * audioContextRecoveryAttempts.current;
-      setTimeout(() => recoverAudioContext(context, contextName), delay);
-    }
-    
-    return false;
-  }, [addLogEntry]);
-
-  // Reinitialize AudioContext when closed
-  const reinitializeAudioContext = useCallback(async () => {
-    if (!isSessionActiveRef.current) return;
-
-    addLogEntry("info", "Reinitializing AudioContext after closure");
-    
-    try {
-      // Clean up existing context
-      if (localAudioContextRef.current) {
-        if (audioWorkletNodeRef.current) {
-          audioWorkletNodeRef.current.disconnect();
-          audioWorkletNodeRef.current = null;
-        }
-        localAudioContextRef.current = null;
-      }
-
-      // Restart audio processing
-      if (mediaStreamRef.current && isRecordingRef.current) {
-        addLogEntry("info", "Restarting audio processing after context recovery");
-        await handleStartListening(true); // Resume listening
-      }
-    } catch (error) {
-      addLogEntry("error", `AudioContext reinitialization failed: ${error.message}`);
-      setIsSessionActive(false);
-    }
-  }, [addLogEntry, isSessionActiveRef, isRecordingRef, handleStartListening]);
 
   // Check AudioWorklet support with fallback
   const checkAudioWorkletSupport = useCallback(async () => {
@@ -607,7 +630,7 @@ const App = () => {
       addLogEntry("warning", "Using deprecated ScriptProcessorNode as fallback");
       return initializeScriptProcessorFallback();
     }
-  }, [addLogEntry, checkAudioWorkletSupport]);
+  }, [addLogEntry, checkAudioWorkletSupport, initializeAudioWorklet, initializeScriptProcessorFallback]);
 
   // Fallback ScriptProcessorNode implementation
   const initializeScriptProcessorFallback = useCallback(() => {
@@ -623,16 +646,6 @@ const App = () => {
     }
   }, [addLogEntry]);
 
-  // WebSocket backpressure handling
-  const checkWebSocketBackpressure = useCallback(() => {
-    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
-      return false;
-    }
-    
-    // Check if WebSocket send buffer is getting full
-    const sendBufferSize = socketRef.current.bufferedAmount || 0;
-    return sendBufferSize > WEBSOCKET_SEND_BUFFER_LIMIT;
-  }, []);
 
   // Enhanced audio chunk sender with retry logic
   const sendAudioChunkWithBackpressure = useCallback(async (audioData) => {
@@ -753,7 +766,7 @@ const App = () => {
       console.error("AudioWorklet initialization error:", error);
       return false;
     }
-  }, [addLogEntry, handleAudioWorkletMessage]);
+  }, [addLogEntry, handleAudioWorkletMessage, monitorAudioContextState]);
 
   const handleStartListening = useCallback(
     async (isResuming = false) => {
