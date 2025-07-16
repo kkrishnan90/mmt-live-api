@@ -15,6 +15,13 @@ import {
 const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 24000;
 const MIC_BUFFER_SIZE = 4096;
+const AUDIO_WORKLET_URL = '/audio-processor.js';
+const MAX_AUDIO_QUEUE_SIZE = 50; // Maximum audio chunks in queue
+const WEBSOCKET_SEND_BUFFER_LIMIT = 65536; // 64KB buffer limit
+const MAX_RETRY_ATTEMPTS = 3; // Maximum retry attempts for failed transmissions
+const RETRY_DELAY_BASE = 100; // Base delay in ms for exponential backoff
+const MAX_AUDIO_CONTEXT_RECOVERY_ATTEMPTS = 5; // Maximum AudioContext recovery attempts
+const AUDIO_CONTEXT_RECOVERY_DELAY = 1000; // Base delay for AudioContext recovery
 
 const LANGUAGES = [
   {code: "en-US", name: "English"},
@@ -45,10 +52,16 @@ const App = () => {
   const playbackAudioContextRef = useRef(null);
   const localAudioContextRef = useRef(null);
   const mediaStreamRef = useRef(null);
-  const scriptProcessorNodeRef = useRef(null);
+  const audioWorkletNodeRef = useRef(null);
   const audioChunkSentCountRef = useRef(0);
   const socketRef = useRef(null);
+  const pendingAudioChunks = useRef([]);
+  const audioMetricsRef = useRef({ dropouts: 0, latency: 0, quality: 1.0, retryCount: 0, failedTransmissions: 0 });
+  const lastSendTimeRef = useRef(0);
+  const retryQueueRef = useRef([]);
   const audioQueueRef = useRef([]);
+  const audioContextRecoveryAttempts = useRef(0);
+  const audioWorkletSupported = useRef(true);
   const isPlayingRef = useRef(false);
   const currentAudioSourceRef = useRef(null);
   const logsAreaRef = useRef(null);
@@ -63,6 +76,40 @@ const App = () => {
   useEffect(() => {
     isMutedRef.current = isMuted;
   }, [isMuted]);
+
+  // Synchronize AudioWorklet with state changes
+  useEffect(() => {
+    if (audioWorkletNodeRef.current) {
+      audioWorkletNodeRef.current.port.postMessage({
+        type: 'SET_MUTED',
+        data: { muted: isMuted }
+      });
+    }
+  }, [isMuted]);
+
+  useEffect(() => {
+    if (audioWorkletNodeRef.current) {
+      audioWorkletNodeRef.current.port.postMessage({
+        type: 'SET_RECORDING',
+        data: { recording: isRecording }
+      });
+    }
+  }, [isRecording]);
+
+  // Note: We'll update system playing state directly in the playback functions
+
+  // Audio metrics monitoring
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (audioWorkletNodeRef.current && isRecording) {
+        audioWorkletNodeRef.current.port.postMessage({
+          type: 'GET_METRICS'
+        });
+      }
+    }, 5000); // Get metrics every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [isRecording]);
 
   const addLogEntry = useCallback((type, content) => {
     if (type === "gemini_audio" || type === "mic_control") {
@@ -167,6 +214,10 @@ const App = () => {
           addLogEntry("audio", "Attempting to create Playback AudioContext.");
           playbackAudioContextRef.current = new (window.AudioContext ||
             window.webkitAudioContext)({sampleRate: OUTPUT_SAMPLE_RATE});
+            
+          // Set up enhanced state monitoring for playback context
+          monitorAudioContextState(playbackAudioContextRef.current, 'PlaybackAudioContext');
+            
           playbackAudioContextRef.current.onstatechange = () =>
             addLogEntry(
               "audio",
@@ -221,6 +272,14 @@ const App = () => {
   const playNextGeminiChunk = useCallback(async () => {
     if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
     isPlayingRef.current = true;
+    
+    // Notify AudioWorklet that system audio is now playing
+    if (audioWorkletNodeRef.current) {
+      audioWorkletNodeRef.current.port.postMessage({
+        type: 'SET_SYSTEM_PLAYING',
+        data: { playing: true }
+      });
+    }
     const arrayBuffer = audioQueueRef.current.shift();
     const audioCtx = await getPlaybackAudioContext(
       "playNextGeminiChunk_SystemAction"
@@ -231,6 +290,14 @@ const App = () => {
         `Playback FAIL: Audio system not ready (${audioCtx?.state})`
       );
       isPlayingRef.current = false;
+      
+      // Notify AudioWorklet that system audio has stopped
+      if (audioWorkletNodeRef.current) {
+        audioWorkletNodeRef.current.port.postMessage({
+          type: 'SET_SYSTEM_PLAYING',
+          data: { playing: false }
+        });
+      }
       return;
     }
     try {
@@ -244,6 +311,14 @@ const App = () => {
           "Received empty or invalid audio chunk. Skipping."
         );
         isPlayingRef.current = false;
+        
+        // Notify AudioWorklet that system audio has stopped
+        if (audioWorkletNodeRef.current) {
+          audioWorkletNodeRef.current.port.postMessage({
+            type: 'SET_SYSTEM_PLAYING',
+            data: { playing: false }
+          });
+        }
         if (audioQueueRef.current.length > 0) playNextGeminiChunk();
         return;
       }
@@ -257,6 +332,14 @@ const App = () => {
           "Received empty audio chunk (after conversion). Skipping."
         );
         isPlayingRef.current = false;
+        
+        // Notify AudioWorklet that system audio has stopped
+        if (audioWorkletNodeRef.current) {
+          audioWorkletNodeRef.current.port.postMessage({
+            type: 'SET_SYSTEM_PLAYING',
+            data: { playing: false }
+          });
+        }
         if (audioQueueRef.current.length > 0) playNextGeminiChunk();
         return;
       }
@@ -275,6 +358,15 @@ const App = () => {
       source.onended = () => {
         addLogEntry("gemini_audio", "Audio chunk finished playing.");
         isPlayingRef.current = false;
+        
+        // Notify AudioWorklet that system audio has stopped
+        if (audioWorkletNodeRef.current) {
+          audioWorkletNodeRef.current.port.postMessage({
+            type: 'SET_SYSTEM_PLAYING',
+            data: { playing: false }
+          });
+        }
+        
         currentAudioSourceRef.current = null;
         if (audioQueueRef.current.length > 0) playNextGeminiChunk();
         source.disconnect();
@@ -287,6 +379,14 @@ const App = () => {
       currentAudioSourceRef.current = null;
       addLogEntry("error", `Playback Error: ${error.message}`);
       isPlayingRef.current = false;
+      
+      // Notify AudioWorklet that system audio has stopped
+      if (audioWorkletNodeRef.current) {
+        audioWorkletNodeRef.current.port.postMessage({
+          type: 'SET_SYSTEM_PLAYING',
+          data: { playing: false }
+        });
+      }
       if (audioQueueRef.current.length > 0) playNextGeminiChunk();
     }
   }, [getPlaybackAudioContext, addLogEntry]);
@@ -309,48 +409,351 @@ const App = () => {
     }
     audioQueueRef.current = [];
     isPlayingRef.current = false;
+    
+    // Notify AudioWorklet that system audio has stopped (barge-in)
+    if (audioWorkletNodeRef.current) {
+      audioWorkletNodeRef.current.port.postMessage({
+        type: 'SET_SYSTEM_PLAYING',
+        data: { playing: false }
+      });
+    }
+    
     addLogEntry("gemini_audio", "Gemini audio queue cleared due to barge-in.");
   }, [addLogEntry]);
 
-  const processAudio = useCallback(
-    (audioProcessingEvent) => {
-      if (
-        !isRecordingRef.current ||
-        isMutedRef.current ||
-        !socketRef.current ||
-        socketRef.current.readyState !== WebSocket.OPEN
-      ) {
-        return;
+  // Exponential backoff delay function
+  const getRetryDelay = useCallback((attempt) => {
+    return RETRY_DELAY_BASE * Math.pow(2, attempt) + Math.random() * 100; // Add jitter
+  }, []);
+
+  // Retry mechanism for audio chunks
+  const retryAudioChunk = useCallback(async (audioData, attempt = 0) => {
+    if (attempt >= MAX_RETRY_ATTEMPTS) {
+      audioMetricsRef.current.failedTransmissions++;
+      addLogEntry("error", `Audio chunk transmission failed after ${MAX_RETRY_ATTEMPTS} attempts`);
+      return false;
+    }
+
+    try {
+      if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+        // WebSocket not available, schedule retry
+        const delay = getRetryDelay(attempt);
+        addLogEntry("warning", `WebSocket not ready, retrying in ${delay.toFixed(0)}ms (attempt ${attempt + 1}/${MAX_RETRY_ATTEMPTS})`);
+        
+        setTimeout(() => {
+          retryAudioChunk(audioData, attempt + 1);
+        }, delay);
+        return false;
       }
-      if (isPlayingRef.current) {
-        const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
-        const hasAudioSignal = inputData.some(
-          (sample) => Math.abs(sample) > 0.04
-        );
-        if (hasAudioSignal) {
+
+      // Check backpressure before retry
+      if (checkWebSocketBackpressure()) {
+        const delay = getRetryDelay(attempt);
+        addLogEntry("warning", `WebSocket backpressure on retry, waiting ${delay.toFixed(0)}ms (attempt ${attempt + 1}/${MAX_RETRY_ATTEMPTS})`);
+        
+        setTimeout(() => {
+          retryAudioChunk(audioData, attempt + 1);
+        }, delay);
+        return false;
+      }
+
+      socketRef.current.send(audioData);
+      audioChunkSentCountRef.current++;
+      lastSendTimeRef.current = Date.now();
+      audioMetricsRef.current.retryCount += attempt; // Track total retry attempts
+      
+      if (attempt > 0) {
+        addLogEntry("success", `Audio chunk sent successfully on retry attempt ${attempt + 1}`);
+      }
+      
+      return true;
+    } catch (error) {
+      const delay = getRetryDelay(attempt);
+      addLogEntry("warning", `Audio send error on attempt ${attempt + 1}: ${error.message}, retrying in ${delay.toFixed(0)}ms`);
+      
+      setTimeout(() => {
+        retryAudioChunk(audioData, attempt + 1);
+      }, delay);
+      return false;
+    }
+  }, [addLogEntry, getRetryDelay, checkWebSocketBackpressure]);
+
+  // AudioContext state monitoring and recovery
+  const monitorAudioContextState = useCallback((context, contextName) => {
+    if (!context) return;
+
+    const handleStateChange = () => {
+      const state = context.state;
+      addLogEntry("audio_context", `${contextName} state changed to: ${state}`);
+      
+      if (state === 'suspended') {
+        addLogEntry("warning", `${contextName} suspended - attempting recovery`);
+        recoverAudioContext(context, contextName);
+      } else if (state === 'interrupted') {
+        addLogEntry("warning", `${contextName} interrupted - scheduling recovery`);
+        setTimeout(() => recoverAudioContext(context, contextName), AUDIO_CONTEXT_RECOVERY_DELAY);
+      } else if (state === 'closed') {
+        addLogEntry("error", `${contextName} closed - reinitializing required`);
+        if (contextName === 'LocalAudioContext' && isRecording) {
+          reinitializeAudioContext();
+        }
+      } else if (state === 'running') {
+        addLogEntry("success", `${contextName} successfully running`);
+        audioContextRecoveryAttempts.current = 0; // Reset recovery attempts on success
+      }
+    };
+
+    context.addEventListener('statechange', handleStateChange);
+    
+    return () => {
+      context.removeEventListener('statechange', handleStateChange);
+    };
+  }, [addLogEntry, isRecording]);
+
+  // Recover suspended AudioContext
+  const recoverAudioContext = useCallback(async (context, contextName) => {
+    if (!context || context.state === 'closed') return false;
+    
+    if (audioContextRecoveryAttempts.current >= MAX_AUDIO_CONTEXT_RECOVERY_ATTEMPTS) {
+      addLogEntry("error", `${contextName} recovery failed after ${MAX_AUDIO_CONTEXT_RECOVERY_ATTEMPTS} attempts`);
+      return false;
+    }
+
+    audioContextRecoveryAttempts.current++;
+    
+    try {
+      if (context.state === 'suspended') {
+        addLogEntry("info", `Attempting to resume ${contextName} (attempt ${audioContextRecoveryAttempts.current})`);
+        await context.resume();
+        
+        if (context.state === 'running') {
+          addLogEntry("success", `${contextName} successfully resumed`);
+          audioContextRecoveryAttempts.current = 0;
+          return true;
+        }
+      }
+    } catch (error) {
+      addLogEntry("error", `Failed to resume ${contextName}: ${error.message}`);
+    }
+
+    // Schedule another recovery attempt
+    if (audioContextRecoveryAttempts.current < MAX_AUDIO_CONTEXT_RECOVERY_ATTEMPTS) {
+      const delay = AUDIO_CONTEXT_RECOVERY_DELAY * audioContextRecoveryAttempts.current;
+      setTimeout(() => recoverAudioContext(context, contextName), delay);
+    }
+    
+    return false;
+  }, [addLogEntry]);
+
+  // Reinitialize AudioContext when closed
+  const reinitializeAudioContext = useCallback(async () => {
+    if (!isSessionActiveRef.current) return;
+
+    addLogEntry("info", "Reinitializing AudioContext after closure");
+    
+    try {
+      // Clean up existing context
+      if (localAudioContextRef.current) {
+        if (audioWorkletNodeRef.current) {
+          audioWorkletNodeRef.current.disconnect();
+          audioWorkletNodeRef.current = null;
+        }
+        localAudioContextRef.current = null;
+      }
+
+      // Restart audio processing
+      if (mediaStreamRef.current && isRecordingRef.current) {
+        addLogEntry("info", "Restarting audio processing after context recovery");
+        await handleStartListening(true); // Resume listening
+      }
+    } catch (error) {
+      addLogEntry("error", `AudioContext reinitialization failed: ${error.message}`);
+      setIsSessionActive(false);
+    }
+  }, [addLogEntry, isSessionActiveRef, isRecordingRef, handleStartListening]);
+
+  // Check AudioWorklet support with fallback
+  const checkAudioWorkletSupport = useCallback(async () => {
+    try {
+      if (typeof AudioWorkletNode === 'undefined' || !window.AudioContext) {
+        throw new Error('AudioWorklet not supported');
+      }
+
+      // Test AudioWorklet creation
+      const testContext = new AudioContext();
+      await testContext.audioWorklet.addModule(AUDIO_WORKLET_URL);
+      testContext.close();
+      
+      audioWorkletSupported.current = true;
+      addLogEntry("success", "AudioWorklet support confirmed");
+      return true;
+    } catch (error) {
+      audioWorkletSupported.current = false;
+      addLogEntry("warning", `AudioWorklet not supported: ${error.message}`);
+      addLogEntry("info", "Falling back to ScriptProcessorNode (deprecated)");
+      return false;
+    }
+  }, [addLogEntry]);
+
+  // Enhanced AudioWorklet initialization with fallback
+  const initializeAudioWorkletWithFallback = useCallback(async () => {
+    // First check if AudioWorklet is supported
+    const isSupported = await checkAudioWorkletSupport();
+    
+    if (isSupported) {
+      return await initializeAudioWorklet();
+    } else {
+      // Fallback to ScriptProcessorNode (for older browsers)
+      addLogEntry("warning", "Using deprecated ScriptProcessorNode as fallback");
+      return initializeScriptProcessorFallback();
+    }
+  }, [addLogEntry, checkAudioWorkletSupport]);
+
+  // Fallback ScriptProcessorNode implementation
+  const initializeScriptProcessorFallback = useCallback(() => {
+    try {
+      addLogEntry("info", "Initializing ScriptProcessorNode fallback");
+      // This would implement the old ScriptProcessorNode approach if needed
+      // For now, we'll indicate that fallback is not implemented
+      addLogEntry("error", "ScriptProcessorNode fallback not implemented - please use a modern browser");
+      return false;
+    } catch (error) {
+      addLogEntry("error", `ScriptProcessorNode fallback failed: ${error.message}`);
+      return false;
+    }
+  }, [addLogEntry]);
+
+  // WebSocket backpressure handling
+  const checkWebSocketBackpressure = useCallback(() => {
+    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    
+    // Check if WebSocket send buffer is getting full
+    const sendBufferSize = socketRef.current.bufferedAmount || 0;
+    return sendBufferSize > WEBSOCKET_SEND_BUFFER_LIMIT;
+  }, []);
+
+  // Enhanced audio chunk sender with retry logic
+  const sendAudioChunkWithBackpressure = useCallback(async (audioData) => {
+    // First try immediate send
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN && !checkWebSocketBackpressure()) {
+      try {
+        socketRef.current.send(audioData);
+        audioChunkSentCountRef.current++;
+        lastSendTimeRef.current = Date.now();
+        return true;
+      } catch (error) {
+        addLogEntry("warning", `Immediate send failed: ${error.message}, starting retry mechanism`);
+        // Fall through to retry mechanism
+      }
+    }
+
+    // If immediate send fails or backpressure detected, use retry mechanism
+    if (checkWebSocketBackpressure()) {
+      addLogEntry("warning", "WebSocket backpressure detected, adding to retry queue");
+      
+      // Add to pending queue (with size limit)
+      if (pendingAudioChunks.current.length < MAX_AUDIO_QUEUE_SIZE) {
+        pendingAudioChunks.current.push(audioData);
+      } else {
+        // Drop oldest chunk if queue is full
+        pendingAudioChunks.current.shift();
+        pendingAudioChunks.current.push(audioData);
+        audioMetricsRef.current.dropouts++;
+        addLogEntry("warning", "Audio buffer overflow - dropping oldest chunk");
+      }
+      return false;
+    }
+
+    // Use retry mechanism for failed sends
+    return await retryAudioChunk(audioData, 0);
+  }, [addLogEntry, checkWebSocketBackpressure, retryAudioChunk]);
+
+  // Process pending audio chunks
+  const processPendingAudioChunks = useCallback(async () => {
+    while (pendingAudioChunks.current.length > 0 && !checkWebSocketBackpressure()) {
+      const chunk = pendingAudioChunks.current.shift();
+      const sent = await sendAudioChunkWithBackpressure(chunk);
+      if (!sent) break; // If we couldn't send, put it back and stop
+    }
+  }, [sendAudioChunkWithBackpressure, checkWebSocketBackpressure]);
+
+  // Periodic processing of pending audio chunks
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (pendingAudioChunks.current.length > 0) {
+        processPendingAudioChunks();
+      }
+    }, 100); // Check every 100ms
+
+    return () => clearInterval(interval);
+  }, [processPendingAudioChunks]);
+
+  // Handle messages from AudioWorklet
+  const handleAudioWorkletMessage = useCallback((event) => {
+    const { type, data } = event.data;
+    
+    switch (type) {
+      case 'AUDIO_DATA':
+        sendAudioChunkWithBackpressure(data.audioData);
+        break;
+        
+      case 'BARGE_IN_DETECTED':
+        if (isPlayingRef.current) {
           addLogEntry(
-            "barge_in",
-            "User speech detected during system playback. Initiating barge-in."
+            "barge_in", 
+            `User speech detected during playback (amplitude: ${data.maxAmplitude.toFixed(3)})`
           );
           stopSystemAudioPlayback();
         }
+        break;
+        
+      case 'METRICS':
+        audioMetricsRef.current = { ...audioMetricsRef.current, ...data };
+        break;
+        
+      default:
+        console.log('Unknown AudioWorklet message:', type, data);
+    }
+  }, [addLogEntry, stopSystemAudioPlayback, sendAudioChunkWithBackpressure]);
+
+  // Initialize AudioWorklet for modern audio processing
+  const initializeAudioWorklet = useCallback(async () => {
+    try {
+      if (localAudioContextRef.current && localAudioContextRef.current.state === "closed") {
+        localAudioContextRef.current = null;
       }
-      const inputBuffer = audioProcessingEvent.inputBuffer;
-      const pcmData = inputBuffer.getChannelData(0);
-      const downsampledBuffer = new Int16Array(pcmData.length);
-      for (let i = 0; i < pcmData.length; i++) {
-        downsampledBuffer[i] = Math.max(-1, Math.min(1, pcmData[i])) * 32767;
+      
+      if (!localAudioContextRef.current) {
+        localAudioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({
+          sampleRate: INPUT_SAMPLE_RATE
+        });
+        
+        // Set up state monitoring for the new context
+        monitorAudioContextState(localAudioContextRef.current, 'LocalAudioContext');
       }
-      if (
-        socketRef.current &&
-        socketRef.current.readyState === WebSocket.OPEN
-      ) {
-        socketRef.current.send(downsampledBuffer.buffer);
-        audioChunkSentCountRef.current++;
-      }
-    },
-    [addLogEntry, stopSystemAudioPlayback]
-  );
+      
+      // Load AudioWorklet module
+      await localAudioContextRef.current.audioWorklet.addModule(AUDIO_WORKLET_URL);
+      
+      // Create AudioWorklet node
+      audioWorkletNodeRef.current = new AudioWorkletNode(
+        localAudioContextRef.current,
+        'audio-processor'
+      );
+      
+      // Set up message handling
+      audioWorkletNodeRef.current.port.onmessage = handleAudioWorkletMessage;
+      
+      addLogEntry("mic", "AudioWorklet initialized successfully");
+      return true;
+    } catch (error) {
+      addLogEntry("error", `Failed to initialize AudioWorklet: ${error.message}`);
+      console.error("AudioWorklet initialization error:", error);
+      return false;
+    }
+  }, [addLogEntry, handleAudioWorkletMessage]);
 
   const handleStartListening = useCallback(
     async (isResuming = false) => {
@@ -383,7 +786,7 @@ const App = () => {
         !mediaStreamRef.current ||
         !localAudioContextRef.current ||
         localAudioContextRef.current.state === "closed" ||
-        !scriptProcessorNodeRef.current
+        !audioWorkletNodeRef.current
       ) {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           addLogEntry("error", "getUserMedia not supported on your browser!");
@@ -397,23 +800,31 @@ const App = () => {
           });
           addLogEntry("mic", "Microphone access GRANTED.");
 
-          localAudioContextRef.current = new (window.AudioContext ||
-            window.webkitAudioContext)({sampleRate: INPUT_SAMPLE_RATE});
+          // Initialize AudioWorklet with fallback support
+          const audioWorkletInitialized = await initializeAudioWorkletWithFallback();
+          if (!audioWorkletInitialized) {
+            addLogEntry("error", "Failed to initialize AudioWorklet");
+            setIsSessionActive(false);
+            return;
+          }
+
+          // Create media stream source and connect to AudioWorklet
           const source = localAudioContextRef.current.createMediaStreamSource(
             mediaStreamRef.current
           );
-          scriptProcessorNodeRef.current =
-            localAudioContextRef.current.createScriptProcessor(
-              MIC_BUFFER_SIZE,
-              1,
-              1
-            );
-          scriptProcessorNodeRef.current.onaudioprocess = processAudio;
-          source.connect(scriptProcessorNodeRef.current);
-          scriptProcessorNodeRef.current.connect(
-            localAudioContextRef.current.destination
-          );
-          addLogEntry("mic", "Microphone processing chain (re)established.");
+          source.connect(audioWorkletNodeRef.current);
+          
+          // Send initial configuration to AudioWorklet
+          audioWorkletNodeRef.current.port.postMessage({
+            type: 'UPDATE_CONFIG',
+            data: {
+              bufferSize: MIC_BUFFER_SIZE,
+              bargeInThreshold: 0.04,
+              noiseSuppression: true
+            }
+          });
+          
+          addLogEntry("mic", "AudioWorklet processing chain established.");
         } catch (err) {
           console.error("Failed to start microphone:", err);
           addLogEntry(
@@ -444,10 +855,18 @@ const App = () => {
           return;
         }
       }
+      // Notify AudioWorklet that recording has started
+      if (audioWorkletNodeRef.current) {
+        audioWorkletNodeRef.current.port.postMessage({
+          type: 'SET_RECORDING',
+          data: { recording: true }
+        });
+      }
+      
       setIsRecording(true);
       addLogEntry("mic_status", "Microphone is NOW actively sending data.");
     },
-    [addLogEntry, processAudio, getPlaybackAudioContext]
+    [addLogEntry, initializeAudioWorklet, getPlaybackAudioContext]
   );
 
   const handlePauseListening = useCallback(() => {
@@ -459,6 +878,15 @@ const App = () => {
       return;
     }
     addLogEntry("mic_control", "Pause Microphone Input requested by user.");
+    
+    // Notify AudioWorklet to stop recording
+    if (audioWorkletNodeRef.current) {
+      audioWorkletNodeRef.current.port.postMessage({
+        type: 'SET_RECORDING',
+        data: { recording: false }
+      });
+    }
+    
     setIsRecording(false);
     addLogEntry("mic_status", "Microphone is NOW paused (not sending data).");
   }, [addLogEntry]);
@@ -470,13 +898,17 @@ const App = () => {
     );
     setIsRecording(false);
 
-    if (scriptProcessorNodeRef.current) {
-      scriptProcessorNodeRef.current.disconnect();
-      scriptProcessorNodeRef.current.onaudioprocess = null;
-      scriptProcessorNodeRef.current = null;
+    // Stop AudioWorklet recording
+    if (audioWorkletNodeRef.current) {
+      audioWorkletNodeRef.current.port.postMessage({
+        type: 'SET_RECORDING',
+        data: { recording: false }
+      });
+      audioWorkletNodeRef.current.disconnect();
+      audioWorkletNodeRef.current = null;
       addLogEntry(
         "mic_resource",
-        "ScriptProcessorNode disconnected and nullified."
+        "AudioWorklet disconnected and nullified."
       );
     }
     if (mediaStreamRef.current) {

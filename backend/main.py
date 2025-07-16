@@ -83,7 +83,8 @@ if not GOOGLE_API_KEY:
         raise ValueError(
             "GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable not set.")
 
-print(f"🔑 API Key loaded: {GOOGLE_API_KEY[:10]}...{GOOGLE_API_KEY[-4:] if len(GOOGLE_API_KEY) > 10 else 'SHORT_KEY'}")
+print(
+    f"🔑 API Key loaded: {GOOGLE_API_KEY[:10]}...{GOOGLE_API_KEY[-4:] if len(GOOGLE_API_KEY) > 10 else 'SHORT_KEY'}")
 
 try:
     gemini_client = genai.Client(api_key=GOOGLE_API_KEY)
@@ -92,7 +93,8 @@ except Exception as e:
     print(f"❌ Failed to initialize Gemini client: {e}")
     raise
 
-GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash-live-preview")  # Load from environment
+GEMINI_MODEL_NAME = os.getenv(
+    "GEMINI_MODEL_NAME", "gemini-2.5-flash-live-preview")  # Load from environment
 INPUT_SAMPLE_RATE = 16000
 
 print(f"🤖 Using Gemini model: {GEMINI_MODEL_NAME}")
@@ -132,6 +134,11 @@ async def websocket_endpoint():
         context_window_compression=types.ContextWindowCompressionConfig(  # Added from reference
             sliding_window=types.SlidingWindow(),
         ),
+        realtime_input_config=types.RealtimeInputConfig(  # Added from reference
+            automatic_activity_detection=types.AutomaticActivityDetection(
+                disabled=False,
+            )
+        ),
         # realtime_input_config=types.RealtimeInputConfig( # Added from reference
         #     automatic_activity_detection=types.AutomaticActivityDetection(
         #         disabled=False,
@@ -144,12 +151,14 @@ async def websocket_endpoint():
         tools=[travel_tool]  # Added travel_tool here
     )
 
-    print(f"🧳 Travel tool configured with {len(travel_tool.function_declarations)} functions:")
+    print(
+        f"🧳 Travel tool configured with {len(travel_tool.function_declarations)} functions:")
     for func in travel_tool.function_declarations:
         print(f"   - {func.name}")
-    
-    print(f"🤖 Attempting to connect to Gemini Live API (model: {GEMINI_MODEL_NAME})...")
-    
+
+    print(
+        f"🤖 Attempting to connect to Gemini Live API (model: {GEMINI_MODEL_NAME})...")
+
     try:
         async with gemini_client.aio.live.connect(
             model=GEMINI_MODEL_NAME,
@@ -383,7 +392,8 @@ async def websocket_endpoint():
                                         }
                                         try:
                                             await websocket.send_json(payload)
-                                            print(f"🎤 User said: {accumulated_user_speech_text}")
+                                            print(
+                                                f"🎤 User said: {accumulated_user_speech_text}")
                                         except Exception as send_exc:
                                             print(
                                                 f"Quart Backend: Error sending final user transcription to client: {type(send_exc).__name__}: {send_exc}")
@@ -563,7 +573,8 @@ async def websocket_endpoint():
         print("   - Firewall blocking WebSocket connections")
         traceback.print_exc()
     except Exception as e_ws_main:
-        print(f"❌ UNHANDLED error in WebSocket connection: {type(e_ws_main).__name__}: {e_ws_main}")
+        print(
+            f"❌ UNHANDLED error in WebSocket connection: {type(e_ws_main).__name__}: {e_ws_main}")
         traceback.print_exc()
     finally:
         print("🔚 WebSocket endpoint processing finished")
