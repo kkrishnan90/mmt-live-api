@@ -593,6 +593,42 @@ const App = () => {
     }
   }, [addLogEntry, getRetryDelay, checkWebSocketBackpressure]);
 
+  // Enhanced audio chunk sender with retry logic
+  const sendAudioChunkWithBackpressure = useCallback(async (audioData) => {
+    // First try immediate send
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN && !checkWebSocketBackpressure()) {
+      try {
+        socketRef.current.send(audioData);
+        audioChunkSentCountRef.current++;
+        lastSendTimeRef.current = Date.now();
+        return true;
+      } catch (error) {
+        addLogEntry("warning", `Immediate send failed: ${error.message}, starting retry mechanism`);
+        // Fall through to retry mechanism
+      }
+    }
+
+    // If immediate send fails or backpressure detected, use retry mechanism
+    if (checkWebSocketBackpressure()) {
+      addLogEntry("warning", "WebSocket backpressure detected, adding to retry queue");
+      
+      // Add to pending queue (with size limit)
+      if (pendingAudioChunks.current.length < MAX_AUDIO_QUEUE_SIZE) {
+        pendingAudioChunks.current.push(audioData);
+      } else {
+        // Drop oldest chunk if queue is full
+        pendingAudioChunks.current.shift();
+        pendingAudioChunks.current.push(audioData);
+        audioMetricsRef.current.dropouts++;
+        addLogEntry("warning", "Audio buffer overflow - dropping oldest chunk");
+      }
+      return false;
+    }
+
+    // Use retry mechanism for failed sends
+    return await retryAudioChunk(audioData, 0);
+  }, [addLogEntry, checkWebSocketBackpressure, retryAudioChunk]);
+
   // Handle messages from AudioWorklet (moved up to fix dependency order)
   const handleAudioWorkletMessage = useCallback((event) => {
     const { type, data } = event.data;
@@ -711,41 +747,6 @@ const App = () => {
 
 
 
-  // Enhanced audio chunk sender with retry logic
-  const sendAudioChunkWithBackpressure = useCallback(async (audioData) => {
-    // First try immediate send
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN && !checkWebSocketBackpressure()) {
-      try {
-        socketRef.current.send(audioData);
-        audioChunkSentCountRef.current++;
-        lastSendTimeRef.current = Date.now();
-        return true;
-      } catch (error) {
-        addLogEntry("warning", `Immediate send failed: ${error.message}, starting retry mechanism`);
-        // Fall through to retry mechanism
-      }
-    }
-
-    // If immediate send fails or backpressure detected, use retry mechanism
-    if (checkWebSocketBackpressure()) {
-      addLogEntry("warning", "WebSocket backpressure detected, adding to retry queue");
-      
-      // Add to pending queue (with size limit)
-      if (pendingAudioChunks.current.length < MAX_AUDIO_QUEUE_SIZE) {
-        pendingAudioChunks.current.push(audioData);
-      } else {
-        // Drop oldest chunk if queue is full
-        pendingAudioChunks.current.shift();
-        pendingAudioChunks.current.push(audioData);
-        audioMetricsRef.current.dropouts++;
-        addLogEntry("warning", "Audio buffer overflow - dropping oldest chunk");
-      }
-      return false;
-    }
-
-    // Use retry mechanism for failed sends
-    return await retryAudioChunk(audioData, 0);
-  }, [addLogEntry, checkWebSocketBackpressure, retryAudioChunk]);
 
   // Process pending audio chunks
   const processPendingAudioChunks = useCallback(async () => {
