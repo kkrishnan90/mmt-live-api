@@ -92,8 +92,10 @@ except Exception as e:
     print(f"❌ Failed to initialize Gemini client: {e}")
     raise
 
-GEMINI_MODEL_NAME = "gemini-2.5-flash-live-preview"  # Using regular Google AI API
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash-live-preview")  # Load from environment
 INPUT_SAMPLE_RATE = 16000
+
+print(f"🤖 Using Gemini model: {GEMINI_MODEL_NAME}")
 
 app = Quart(__name__)
 app = cors(app, allow_origin="*")
