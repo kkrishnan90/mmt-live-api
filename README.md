@@ -47,18 +47,29 @@ A real-time voice-enabled travel assistant built with Gemini Live API, featuring
    cd backend
    ```
 
-2. **Install dependencies**:
+2. **Create and activate virtual environment**:
+   ```bash
+   python -m venv venv
+   
+   # On Windows
+   venv\Scripts\activate
+   
+   # On macOS/Linux
+   source venv/bin/activate
+   ```
+
+3. **Install dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
 
-3. **Configure environment**:
+4. **Configure environment**:
    ```bash
    cp .env.example .env
    # Edit .env and add your GEMINI_API_KEY
    ```
 
-4. **Start the server**:
+5. **Start the server**:
    ```bash
    hypercorn main:app --bind 0.0.0.0:8000
    ```
