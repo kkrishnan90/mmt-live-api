@@ -62,7 +62,7 @@ bookFlight_declaration = types.FunctionDeclaration(
 # Function Declaration for getFlightStatus (CRITICAL CUSTOMER SUPPORT)
 getFlightStatus_declaration = types.FunctionDeclaration(
     name="getFlightStatus",
-    description="[CRITICAL CUSTOMER SUPPORT] Checks real-time flight status for customer inquiries about delays, gate changes, or departure updates. Use when customers ask about flight status, 'is my flight on time', 'what gate', or any flight timing questions.",
+    description="**MANDATORY CALL** when customer asks about flight status, delays, gate info, 'is my flight on time', 'what gate', 'flight timing', or any flight status questions. Requires booking ID. Provides real-time flight status, gate, terminal, and timing information.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
@@ -109,7 +109,7 @@ bookHotel_declaration = types.FunctionDeclaration(
 # Function Declaration for getBookingDetails (PRIMARY CUSTOMER SUPPORT)
 getBookingDetails_declaration = types.FunctionDeclaration(
     name="getBookingDetails",
-    description="[PRIMARY CUSTOMER SUPPORT] Retrieves comprehensive booking information when customers inquire about their reservations. Use this for any customer questions about their bookings, travel details, or confirmation needs. Always use this first when customer mentions a booking ID.",
+    description="**MANDATORY CALL** when customer mentions ANY booking ID (BK001, BK002, etc). Customer says 'check booking BK001' or 'my booking BK001' → IMMEDIATELY call this function. Gets comprehensive booking information including flight/hotel details, passenger info, costs, and status.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
@@ -122,7 +122,7 @@ getBookingDetails_declaration = types.FunctionDeclaration(
 # Function Declaration for listUserBookings (HIGH PRIORITY CUSTOMER SUPPORT)
 listUserBookings_declaration = types.FunctionDeclaration(
     name="listUserBookings",
-    description="[HIGH PRIORITY CUSTOMER SUPPORT] Shows all customer bookings when they ask 'show me my bookings', 'what bookings do I have', or need to see their travel history. Use when customer wants overview of all their reservations.",
+    description="**MANDATORY CALL** when customer asks 'show my bookings', 'list my bookings', 'what bookings do I have', or wants to see all their reservations. No parameters needed - just call immediately when customer requests booking list.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={}

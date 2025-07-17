@@ -1,5 +1,4 @@
 import datetime
-import uuid
 import logging
 import sys
 import json
@@ -22,7 +21,10 @@ logger = logging.getLogger(__name__)
 GLOBAL_LOG_STORE = []
 
 # User ID (maintaining compatibility)
-USER_ID = "user_krishnan_001"
+USER_ID = "shubham"
+
+# Simple booking counter for sequential IDs
+BOOKING_COUNTER = 0
 
 # --- Mock Data Structures ---
 
@@ -36,7 +38,17 @@ MOCK_DATA_STORE = {
     "weather": {}
 }
 
+# --- Helper Functions ---
+
+def generate_booking_id():
+    """Generate simple sequential booking IDs like BK001, BK002, etc."""
+    global BOOKING_COUNTER
+    BOOKING_COUNTER += 1
+    return f"BK{BOOKING_COUNTER:03d}"
+
 # --- Structured Logging Helper ---
+
+
 def log_travel_interaction(func_name: str, params: dict, status: str = "N/A", result_summary: str = None, error_message: str = None):
     """Helper function for structured logging of travel API interactions."""
     log_entry = {
@@ -48,7 +60,7 @@ def log_travel_interaction(func_name: str, params: dict, status: str = "N/A", re
         log_entry["result_summary"] = result_summary
     if error_message:
         log_entry["error_message"] = error_message
-    
+
     # Store the log entry in the global list
     GLOBAL_LOG_STORE.append(log_entry)
 
@@ -59,9 +71,10 @@ def log_travel_interaction(func_name: str, params: dict, status: str = "N/A", re
 
 # --- Mock Data Initialization ---
 
+
 def initialize_mock_data():
     """Initialize mock data for flights, hotels, destinations, etc."""
-    
+
     # Sample flights data
     sample_flights = [
         {
@@ -70,7 +83,7 @@ def initialize_mock_data():
             "flight_number": "EK234",
             "origin": "BOM",
             "origin_city": "Mumbai",
-            "destination": "DXB", 
+            "destination": "DXB",
             "destination_city": "Dubai",
             "departure_time": "2024-02-15T14:30:00",
             "arrival_time": "2024-02-15T17:45:00",
@@ -87,7 +100,7 @@ def initialize_mock_data():
             "origin": "DEL",
             "origin_city": "Delhi",
             "destination": "BOM",
-            "destination_city": "Mumbai", 
+            "destination_city": "Mumbai",
             "departure_time": "2024-02-16T08:15:00",
             "arrival_time": "2024-02-16T10:30:00",
             "duration": "2h 15m",
@@ -105,7 +118,7 @@ def initialize_mock_data():
             "destination": "GOI",
             "destination_city": "Goa",
             "departure_time": "2024-02-17T12:00:00",
-            "arrival_time": "2024-02-17T13:15:00", 
+            "arrival_time": "2024-02-17T13:15:00",
             "duration": "1h 15m",
             "price": 6200.0,
             "currency": "INR",
@@ -113,7 +126,7 @@ def initialize_mock_data():
             "aircraft": "Airbus A320neo"
         }
     ]
-    
+
     # Sample hotels data
     sample_hotels = [
         {
@@ -123,7 +136,7 @@ def initialize_mock_data():
             "country": "India",
             "rating": 5,
             "price_per_night": 25000.0,
-            "currency": "INR", 
+            "currency": "INR",
             "amenities": ["WiFi", "Pool", "Spa", "Restaurant", "Room Service"],
             "available_rooms": 12,
             "room_type": "Deluxe Ocean View",
@@ -131,7 +144,7 @@ def initialize_mock_data():
             "check_out": "12:00"
         },
         {
-            "hotel_id": "HTL002", 
+            "hotel_id": "HTL002",
             "name": "The Leela Palace",
             "city": "Bangalore",
             "country": "India",
@@ -141,14 +154,14 @@ def initialize_mock_data():
             "amenities": ["WiFi", "Pool", "Gym", "Restaurant", "Business Center"],
             "available_rooms": 8,
             "room_type": "Executive Suite",
-            "check_in": "14:00", 
+            "check_in": "14:00",
             "check_out": "11:00"
         },
         {
             "hotel_id": "HTL003",
             "name": "Grand Hyatt Goa",
             "city": "Goa",
-            "country": "India", 
+            "country": "India",
             "rating": 4,
             "price_per_night": 12000.0,
             "currency": "INR",
@@ -173,12 +186,12 @@ def initialize_mock_data():
             "check_out": "12:00"
         }
     ]
-    
+
     # Sample destinations data
     sample_destinations = [
         {
             "destination_id": "DEST001",
-            "city": "Dubai", 
+            "city": "Dubai",
             "country": "UAE",
             "description": "A modern metropolis known for luxury shopping, ultramodern architecture and lively nightlife scene.",
             "popular_attractions": ["Burj Khalifa", "Dubai Mall", "Palm Jumeirah", "Dubai Fountain"],
@@ -192,12 +205,12 @@ def initialize_mock_data():
             "country": "India",
             "description": "Known for its pristine beaches, vibrant nightlife, and Portuguese colonial architecture.",
             "popular_attractions": ["Baga Beach", "Basilica of Bom Jesus", "Dudhsagar Falls", "Fort Aguada"],
-            "best_time_to_visit": "November to February", 
+            "best_time_to_visit": "November to February",
             "currency": "INR",
             "language": "Hindi, English, Konkani"
         }
     ]
-    
+
     # Sample activities data
     sample_activities = [
         {
@@ -211,29 +224,86 @@ def initialize_mock_data():
             "description": "Visit the world's tallest building and enjoy panoramic city views."
         },
         {
-            "activity_id": "ACT002", 
+            "activity_id": "ACT002",
             "name": "Dolphin Watching",
             "city": "Goa",
             "type": "Adventure",
             "price": 1500.0,
-            "currency": "INR", 
+            "currency": "INR",
             "duration": "3 hours",
             "description": "Boat trip to spot dolphins in their natural habitat."
         }
     ]
-    
+
     # Initialize data in the store
     for flight in sample_flights:
         MOCK_DATA_STORE["flights"][flight["flight_id"]] = flight
-        
+
     for hotel in sample_hotels:
         MOCK_DATA_STORE["hotels"][hotel["hotel_id"]] = hotel
-        
+
     for dest in sample_destinations:
         MOCK_DATA_STORE["destinations"][dest["destination_id"]] = dest
-        
+
     for activity in sample_activities:
         MOCK_DATA_STORE["activities"][activity["activity_id"]] = activity
+
+    # Sample bookings for immediate testing
+    sample_bookings = [
+        {
+            "booking_id": "BK001",
+            "user_id": USER_ID,
+            "type": "flight",
+            "flight_id": "FL001",
+            "flight_details": sample_flights[0].copy(),
+            "passenger_name": "Shubham",
+            "passenger_email": "shubham@example.com",
+            "passengers": 1,
+            "total_cost": 45000.0,
+            "currency": "INR",
+            "booking_date": "2024-02-10T10:30:00",
+            "status": "CONFIRMED"
+        },
+        {
+            "booking_id": "BK002", 
+            "user_id": USER_ID,
+            "type": "hotel",
+            "hotel_id": "HTL004",
+            "hotel_details": sample_hotels[3].copy(),
+            "guest_name": "Shubham",
+            "guest_email": "shubham@example.com",
+            "check_in_date": "2024-02-15",
+            "check_out_date": "2024-02-17",
+            "rooms": 1,
+            "nights": 2,
+            "total_cost": 5000.0,
+            "currency": "AED",
+            "booking_date": "2024-02-10T11:15:00",
+            "status": "CONFIRMED"
+        },
+        {
+            "booking_id": "BK003",
+            "user_id": USER_ID,
+            "type": "flight",
+            "flight_id": "FL002",
+            "flight_details": sample_flights[1].copy(),
+            "passenger_name": "Shubham",
+            "passenger_email": "shubham@example.com",
+            "passengers": 1,
+            "total_cost": 8500.0,
+            "currency": "INR",
+            "booking_date": "2024-02-11T14:20:00",
+            "status": "CONFIRMED"
+        }
+    ]
+    
+    # Store sample bookings
+    for booking in sample_bookings:
+        MOCK_DATA_STORE["bookings"][booking["booking_id"]] = booking
+    
+    # Update booking counter to continue from BK004
+    global BOOKING_COUNTER
+    BOOKING_COUNTER = 3
     
     # Sample weather data
     MOCK_DATA_STORE["weather"] = {
@@ -242,78 +312,88 @@ def initialize_mock_data():
             "condition": "Sunny",
             "humidity": 65,
             "forecast": [
-                {"date": "2024-02-15", "high": 30, "low": 22, "condition": "Sunny"},
-                {"date": "2024-02-16", "high": 29, "low": 21, "condition": "Partly Cloudy"},
+                {"date": "2024-02-15", "high": 30,
+                    "low": 22, "condition": "Sunny"},
+                {"date": "2024-02-16", "high": 29,
+                    "low": 21, "condition": "Partly Cloudy"},
                 {"date": "2024-02-17", "high": 31, "low": 23, "condition": "Sunny"}
             ]
         },
         "Goa": {
             "current_temp": 32,
-            "condition": "Partly Cloudy", 
+            "condition": "Partly Cloudy",
             "humidity": 78,
             "forecast": [
-                {"date": "2024-02-15", "high": 34, "low": 24, "condition": "Sunny"},
-                {"date": "2024-02-16", "high": 33, "low": 25, "condition": "Partly Cloudy"},
-                {"date": "2024-02-17", "high": 32, "low": 24, "condition": "Scattered Showers"}
+                {"date": "2024-02-15", "high": 34,
+                    "low": 24, "condition": "Sunny"},
+                {"date": "2024-02-16", "high": 33,
+                    "low": 25, "condition": "Partly Cloudy"},
+                {"date": "2024-02-17", "high": 32, "low": 24,
+                    "condition": "Scattered Showers"}
             ]
         }
     }
 
 # --- Travel Function Implementations ---
 
+
 def search_flights(origin: str, destination: str, departure_date: str, passengers: int = 1) -> dict:
     """Search for available flights based on criteria."""
     func_name = "search_flights"
-    params = {"origin": origin, "destination": destination, "departure_date": departure_date, "passengers": passengers}
-    
+    params = {"origin": origin, "destination": destination,
+              "departure_date": departure_date, "passengers": passengers}
+
     try:
         # Filter flights based on origin and destination
         matching_flights = []
         for flight_id, flight in MOCK_DATA_STORE["flights"].items():
-            if (flight["origin"].lower() == origin.lower() or 
+            if (flight["origin"].lower() == origin.lower() or
                 flight["origin_city"].lower() == origin.lower() or
                 flight["destination"].lower() == destination.lower() or
-                flight["destination_city"].lower() == destination.lower()):
-                
+                    flight["destination_city"].lower() == destination.lower()):
+
                 # Check if flight has enough available seats
                 if flight["available_seats"] >= passengers:
                     matching_flights.append(flight)
-        
+
         if not matching_flights:
-            log_travel_interaction(func_name, params, status="NO_FLIGHTS_FOUND", 
-                                 error_message=f"No flights found from {origin} to {destination}")
+            log_travel_interaction(func_name, params, status="NO_FLIGHTS_FOUND",
+                                   error_message=f"No flights found from {origin} to {destination}")
             return {"status": "NO_FLIGHTS_FOUND", "message": f"No flights found from {origin} to {destination}", "flights": []}
-        
-        log_travel_interaction(func_name, params, status="SUCCESS", 
-                             result_summary=f"Found {len(matching_flights)} flight(s)")
+
+        log_travel_interaction(func_name, params, status="SUCCESS",
+                               result_summary=f"Found {len(matching_flights)} flight(s)")
         return {"status": "SUCCESS", "flights": matching_flights}
-        
+
     except Exception as e:
-        log_travel_interaction(func_name, params, status="ERROR", error_message=str(e))
+        log_travel_interaction(
+            func_name, params, status="ERROR", error_message=str(e))
         return {"status": "ERROR", "message": "An error occurred while searching flights"}
+
 
 def book_flight(flight_id: str, passenger_name: str, passenger_email: str, passengers: int = 1) -> dict:
     """Book a flight for the user."""
     func_name = "book_flight"
-    params = {"flight_id": flight_id, "passenger_name": passenger_name, "passenger_email": passenger_email, "passengers": passengers}
-    
+    params = {"flight_id": flight_id, "passenger_name": passenger_name,
+              "passenger_email": passenger_email, "passengers": passengers}
+
     try:
         # Check if flight exists
         if flight_id not in MOCK_DATA_STORE["flights"]:
-            log_travel_interaction(func_name, params, status="FLIGHT_NOT_FOUND", 
-                                 error_message=f"Flight {flight_id} not found")
+            log_travel_interaction(func_name, params, status="FLIGHT_NOT_FOUND",
+                                   error_message=f"Flight {flight_id} not found")
             return {"status": "FLIGHT_NOT_FOUND", "message": f"Flight {flight_id} not found"}
-        
+
         flight = MOCK_DATA_STORE["flights"][flight_id]
-        
+
         # Check availability
         if flight["available_seats"] < passengers:
-            log_travel_interaction(func_name, params, status="INSUFFICIENT_SEATS", 
-                                 error_message=f"Only {flight['available_seats']} seats available")
+            log_travel_interaction(func_name, params, status="INSUFFICIENT_SEATS",
+                                   error_message=f"Only {flight['available_seats']} seats available")
             return {"status": "INSUFFICIENT_SEATS", "message": f"Only {flight['available_seats']} seats available"}
-        
+
         # Create booking
-        booking_id = f"BK{uuid.uuid4().hex[:8].upper()}"
+        booking_id = generate_booking_id()
         booking = {
             "booking_id": booking_id,
             "user_id": USER_ID,
@@ -328,15 +408,15 @@ def book_flight(flight_id: str, passenger_name: str, passenger_email: str, passe
             "booking_date": datetime.datetime.now().isoformat(),
             "status": "CONFIRMED"
         }
-        
+
         # Update flight availability
         MOCK_DATA_STORE["flights"][flight_id]["available_seats"] -= passengers
-        
+
         # Store booking
         MOCK_DATA_STORE["bookings"][booking_id] = booking
-        
-        log_travel_interaction(func_name, params, status="SUCCESS", 
-                             result_summary=f"Flight booked successfully. Booking ID: {booking_id}")
+
+        log_travel_interaction(func_name, params, status="SUCCESS",
+                               result_summary=f"Flight booked successfully. Booking ID: {booking_id}")
         return {
             "status": "SUCCESS",
             "message": f"Flight booked successfully",
@@ -344,30 +424,32 @@ def book_flight(flight_id: str, passenger_name: str, passenger_email: str, passe
             "total_cost": booking["total_cost"],
             "currency": booking["currency"]
         }
-        
+
     except Exception as e:
-        log_travel_interaction(func_name, params, status="ERROR", error_message=str(e))
+        log_travel_interaction(
+            func_name, params, status="ERROR", error_message=str(e))
         return {"status": "ERROR", "message": "An error occurred while booking the flight"}
+
 
 def get_flight_status(booking_id: str) -> dict:
     """Get flight status by booking ID."""
     func_name = "get_flight_status"
     params = {"booking_id": booking_id}
-    
+
     try:
         if booking_id not in MOCK_DATA_STORE["bookings"]:
-            log_travel_interaction(func_name, params, status="BOOKING_NOT_FOUND", 
-                                 error_message=f"Booking {booking_id} not found")
+            log_travel_interaction(func_name, params, status="BOOKING_NOT_FOUND",
+                                   error_message=f"Booking {booking_id} not found")
             return {"status": "BOOKING_NOT_FOUND", "message": f"Booking {booking_id} not found"}
-        
+
         booking = MOCK_DATA_STORE["bookings"][booking_id]
         if booking["type"] != "flight":
-            log_travel_interaction(func_name, params, status="NOT_FLIGHT_BOOKING", 
-                                 error_message="This booking is not for a flight")
+            log_travel_interaction(func_name, params, status="NOT_FLIGHT_BOOKING",
+                                   error_message="This booking is not for a flight")
             return {"status": "NOT_FLIGHT_BOOKING", "message": "This booking is not for a flight"}
-        
+
         flight_details = booking["flight_details"]
-        
+
         # Mock flight status (in real system, this would check actual flight status)
         status_info = {
             "booking_id": booking_id,
@@ -381,20 +463,23 @@ def get_flight_status(booking_id: str) -> dict:
             "gate": "A12",  # Mock gate
             "terminal": "3"  # Mock terminal
         }
-        
-        log_travel_interaction(func_name, params, status="SUCCESS", 
-                             result_summary=f"Flight status retrieved for {flight_details['flight_number']}")
+
+        log_travel_interaction(func_name, params, status="SUCCESS",
+                               result_summary=f"Flight status retrieved for {flight_details['flight_number']}")
         return {"status": "SUCCESS", "flight_status": status_info}
-        
+
     except Exception as e:
-        log_travel_interaction(func_name, params, status="ERROR", error_message=str(e))
+        log_travel_interaction(
+            func_name, params, status="ERROR", error_message=str(e))
         return {"status": "ERROR", "message": "An error occurred while retrieving flight status"}
+
 
 def search_hotels(city: str, check_in_date: str, check_out_date: str, guests: int = 1) -> dict:
     """Search for available hotels."""
     func_name = "search_hotels"
-    params = {"city": city, "check_in_date": check_in_date, "check_out_date": check_out_date, "guests": guests}
-    
+    params = {"city": city, "check_in_date": check_in_date,
+              "check_out_date": check_out_date, "guests": guests}
+
     try:
         # Filter hotels by city
         matching_hotels = []
@@ -403,53 +488,57 @@ def search_hotels(city: str, check_in_date: str, check_out_date: str, guests: in
                 # Check if hotel has enough available rooms
                 if hotel["available_rooms"] >= 1:  # Assuming 1 room requested
                     matching_hotels.append(hotel)
-        
+
         if not matching_hotels:
-            log_travel_interaction(func_name, params, status="NO_HOTELS_FOUND", 
-                                 error_message=f"No hotels found in {city}")
+            log_travel_interaction(func_name, params, status="NO_HOTELS_FOUND",
+                                   error_message=f"No hotels found in {city}")
             return {"status": "NO_HOTELS_FOUND", "message": f"No hotels found in {city}", "hotels": []}
-        
-        log_travel_interaction(func_name, params, status="SUCCESS", 
-                             result_summary=f"Found {len(matching_hotels)} hotel(s)")
+
+        log_travel_interaction(func_name, params, status="SUCCESS",
+                               result_summary=f"Found {len(matching_hotels)} hotel(s)")
         return {"status": "SUCCESS", "hotels": matching_hotels}
-        
+
     except Exception as e:
-        log_travel_interaction(func_name, params, status="ERROR", error_message=str(e))
+        log_travel_interaction(
+            func_name, params, status="ERROR", error_message=str(e))
         return {"status": "ERROR", "message": "An error occurred while searching hotels"}
 
+
 def book_hotel(hotel_id: str, guest_name: str, guest_email: str, check_in_date: str, check_out_date: str, rooms: int = 1) -> dict:
-    """Book a hotel for the user.""" 
+    """Book a hotel for the user."""
     func_name = "book_hotel"
-    params = {"hotel_id": hotel_id, "guest_name": guest_name, "guest_email": guest_email, 
+    params = {"hotel_id": hotel_id, "guest_name": guest_name, "guest_email": guest_email,
               "check_in_date": check_in_date, "check_out_date": check_out_date, "rooms": rooms}
-    
+
     try:
         # Check if hotel exists
         if hotel_id not in MOCK_DATA_STORE["hotels"]:
-            log_travel_interaction(func_name, params, status="HOTEL_NOT_FOUND", 
-                                 error_message=f"Hotel {hotel_id} not found")
+            log_travel_interaction(func_name, params, status="HOTEL_NOT_FOUND",
+                                   error_message=f"Hotel {hotel_id} not found")
             return {"status": "HOTEL_NOT_FOUND", "message": f"Hotel {hotel_id} not found"}
-        
+
         hotel = MOCK_DATA_STORE["hotels"][hotel_id]
-        
+
         # Check availability
         if hotel["available_rooms"] < rooms:
-            log_travel_interaction(func_name, params, status="INSUFFICIENT_ROOMS", 
-                                 error_message=f"Only {hotel['available_rooms']} rooms available")
+            log_travel_interaction(func_name, params, status="INSUFFICIENT_ROOMS",
+                                   error_message=f"Only {hotel['available_rooms']} rooms available")
             return {"status": "INSUFFICIENT_ROOMS", "message": f"Only {hotel['available_rooms']} rooms available"}
-        
+
         # Calculate number of nights
-        check_in = datetime.datetime.fromisoformat(check_in_date.replace('Z', '+00:00'))
-        check_out = datetime.datetime.fromisoformat(check_out_date.replace('Z', '+00:00'))
+        check_in = datetime.datetime.fromisoformat(
+            check_in_date.replace('Z', '+00:00'))
+        check_out = datetime.datetime.fromisoformat(
+            check_out_date.replace('Z', '+00:00'))
         nights = (check_out - check_in).days
-        
+
         if nights <= 0:
-            log_travel_interaction(func_name, params, status="INVALID_DATES", 
-                                 error_message="Check-out date must be after check-in date")
+            log_travel_interaction(func_name, params, status="INVALID_DATES",
+                                   error_message="Check-out date must be after check-in date")
             return {"status": "INVALID_DATES", "message": "Check-out date must be after check-in date"}
-        
+
         # Create booking
-        booking_id = f"BK{uuid.uuid4().hex[:8].upper()}"
+        booking_id = generate_booking_id()
         booking = {
             "booking_id": booking_id,
             "user_id": USER_ID,
@@ -467,15 +556,15 @@ def book_hotel(hotel_id: str, guest_name: str, guest_email: str, check_in_date: 
             "booking_date": datetime.datetime.now().isoformat(),
             "status": "CONFIRMED"
         }
-        
+
         # Update hotel availability
         MOCK_DATA_STORE["hotels"][hotel_id]["available_rooms"] -= rooms
-        
+
         # Store booking
         MOCK_DATA_STORE["bookings"][booking_id] = booking
-        
-        log_travel_interaction(func_name, params, status="SUCCESS", 
-                             result_summary=f"Hotel booked successfully. Booking ID: {booking_id}")
+
+        log_travel_interaction(func_name, params, status="SUCCESS",
+                               result_summary=f"Hotel booked successfully. Booking ID: {booking_id}")
         return {
             "status": "SUCCESS",
             "message": f"Hotel booked successfully",
@@ -484,78 +573,84 @@ def book_hotel(hotel_id: str, guest_name: str, guest_email: str, check_in_date: 
             "currency": booking["currency"],
             "nights": nights
         }
-        
+
     except Exception as e:
-        log_travel_interaction(func_name, params, status="ERROR", error_message=str(e))
+        log_travel_interaction(
+            func_name, params, status="ERROR", error_message=str(e))
         return {"status": "ERROR", "message": "An error occurred while booking the hotel"}
+
 
 def get_booking_details(booking_id: str) -> dict:
     """Get details of a specific booking."""
     func_name = "get_booking_details"
     params = {"booking_id": booking_id}
-    
+
     try:
         if booking_id not in MOCK_DATA_STORE["bookings"]:
-            log_travel_interaction(func_name, params, status="BOOKING_NOT_FOUND", 
-                                 error_message=f"Booking {booking_id} not found")
+            log_travel_interaction(func_name, params, status="BOOKING_NOT_FOUND",
+                                   error_message=f"Booking {booking_id} not found")
             return {"status": "BOOKING_NOT_FOUND", "message": f"Booking {booking_id} not found"}
-        
+
         booking = MOCK_DATA_STORE["bookings"][booking_id]
-        
-        log_travel_interaction(func_name, params, status="SUCCESS", 
-                             result_summary=f"Booking details retrieved for {booking_id}")
+
+        log_travel_interaction(func_name, params, status="SUCCESS",
+                               result_summary=f"Booking details retrieved for {booking_id}")
         return {"status": "SUCCESS", "booking": booking}
-        
+
     except Exception as e:
-        log_travel_interaction(func_name, params, status="ERROR", error_message=str(e))
+        log_travel_interaction(
+            func_name, params, status="ERROR", error_message=str(e))
         return {"status": "ERROR", "message": "An error occurred while retrieving booking details"}
+
 
 def list_user_bookings(user_id: str = None) -> dict:
     """List all bookings for a user."""
     func_name = "list_user_bookings"
     user_id = user_id or USER_ID
     params = {"user_id": user_id}
-    
+
     try:
         user_bookings = []
         for booking_id, booking in MOCK_DATA_STORE["bookings"].items():
             if booking["user_id"] == user_id:
                 user_bookings.append(booking)
-        
+
         if not user_bookings:
-            log_travel_interaction(func_name, params, status="NO_BOOKINGS_FOUND", 
-                                 result_summary=f"No bookings found for user {user_id}")
+            log_travel_interaction(func_name, params, status="NO_BOOKINGS_FOUND",
+                                   result_summary=f"No bookings found for user {user_id}")
             return {"status": "NO_BOOKINGS_FOUND", "message": f"No bookings found", "bookings": []}
-        
-        log_travel_interaction(func_name, params, status="SUCCESS", 
-                             result_summary=f"Found {len(user_bookings)} booking(s)")
+
+        log_travel_interaction(func_name, params, status="SUCCESS",
+                               result_summary=f"Found {len(user_bookings)} booking(s)")
         return {"status": "SUCCESS", "bookings": user_bookings}
-        
+
     except Exception as e:
-        log_travel_interaction(func_name, params, status="ERROR", error_message=str(e))
+        log_travel_interaction(
+            func_name, params, status="ERROR", error_message=str(e))
         return {"status": "ERROR", "message": "An error occurred while retrieving bookings"}
+
 
 def cancel_booking(booking_id: str) -> dict:
     """Cancel a booking."""
     func_name = "cancel_booking"
     params = {"booking_id": booking_id}
-    
+
     try:
         if booking_id not in MOCK_DATA_STORE["bookings"]:
-            log_travel_interaction(func_name, params, status="BOOKING_NOT_FOUND", 
-                                 error_message=f"Booking {booking_id} not found")
+            log_travel_interaction(func_name, params, status="BOOKING_NOT_FOUND",
+                                   error_message=f"Booking {booking_id} not found")
             return {"status": "BOOKING_NOT_FOUND", "message": f"Booking {booking_id} not found"}
-        
+
         booking = MOCK_DATA_STORE["bookings"][booking_id]
-        
+
         if booking["status"] == "CANCELLED":
-            log_travel_interaction(func_name, params, status="ALREADY_CANCELLED", 
-                                 error_message="Booking is already cancelled")
+            log_travel_interaction(func_name, params, status="ALREADY_CANCELLED",
+                                   error_message="Booking is already cancelled")
             return {"status": "ALREADY_CANCELLED", "message": "Booking is already cancelled"}
-        
+
         # Update booking status
         MOCK_DATA_STORE["bookings"][booking_id]["status"] = "CANCELLED"
-        
+
         # Restore availability based on booking type
         if booking["type"] == "flight":
             flight_id = booking["flight_id"]
@@ -565,20 +660,22 @@ def cancel_booking(booking_id: str) -> dict:
             hotel_id = booking["hotel_id"]
             if hotel_id in MOCK_DATA_STORE["hotels"]:
                 MOCK_DATA_STORE["hotels"][hotel_id]["available_rooms"] += booking["rooms"]
-        
-        log_travel_interaction(func_name, params, status="SUCCESS", 
-                             result_summary=f"Booking {booking_id} cancelled successfully")
+
+        log_travel_interaction(func_name, params, status="SUCCESS",
+                               result_summary=f"Booking {booking_id} cancelled successfully")
         return {"status": "SUCCESS", "message": f"Booking {booking_id} cancelled successfully"}
-        
+
     except Exception as e:
-        log_travel_interaction(func_name, params, status="ERROR", error_message=str(e))
+        log_travel_interaction(
+            func_name, params, status="ERROR", error_message=str(e))
         return {"status": "ERROR", "message": "An error occurred while cancelling the booking"}
+
 
 def get_destination_info(city: str) -> dict:
     """Get information about a travel destination."""
     func_name = "get_destination_info"
     params = {"city": city}
-    
+
     try:
         # Search for destination by city name
         destination_found = None
@@ -586,25 +683,27 @@ def get_destination_info(city: str) -> dict:
             if dest["city"].lower() == city.lower():
                 destination_found = dest
                 break
-        
+
         if not destination_found:
-            log_travel_interaction(func_name, params, status="DESTINATION_NOT_FOUND", 
-                                 error_message=f"No information found for {city}")
+            log_travel_interaction(func_name, params, status="DESTINATION_NOT_FOUND",
+                                   error_message=f"No information found for {city}")
             return {"status": "DESTINATION_NOT_FOUND", "message": f"No information found for {city}"}
-        
-        log_travel_interaction(func_name, params, status="SUCCESS", 
-                             result_summary=f"Destination info retrieved for {city}")
+
+        log_travel_interaction(func_name, params, status="SUCCESS",
+                               result_summary=f"Destination info retrieved for {city}")
         return {"status": "SUCCESS", "destination": destination_found}
-        
+
     except Exception as e:
-        log_travel_interaction(func_name, params, status="ERROR", error_message=str(e))
+        log_travel_interaction(
+            func_name, params, status="ERROR", error_message=str(e))
         return {"status": "ERROR", "message": "An error occurred while retrieving destination information"}
+
 
 def get_weather_info(city: str) -> dict:
     """Get weather information for a city."""
     func_name = "get_weather_info"
     params = {"city": city}
-    
+
     try:
         # Search for weather data by city name
         weather_found = None
@@ -612,66 +711,75 @@ def get_weather_info(city: str) -> dict:
             if weather_city.lower() == city.lower():
                 weather_found = weather_data
                 break
-        
+
         if not weather_found:
-            log_travel_interaction(func_name, params, status="WEATHER_NOT_FOUND", 
-                                 error_message=f"No weather data found for {city}")
+            log_travel_interaction(func_name, params, status="WEATHER_NOT_FOUND",
+                                   error_message=f"No weather data found for {city}")
             return {"status": "WEATHER_NOT_FOUND", "message": f"No weather data found for {city}"}
-        
-        log_travel_interaction(func_name, params, status="SUCCESS", 
-                             result_summary=f"Weather info retrieved for {city}")
+
+        log_travel_interaction(func_name, params, status="SUCCESS",
+                               result_summary=f"Weather info retrieved for {city}")
         return {"status": "SUCCESS", "weather": weather_found}
-        
+
     except Exception as e:
-        log_travel_interaction(func_name, params, status="ERROR", error_message=str(e))
+        log_travel_interaction(
+            func_name, params, status="ERROR", error_message=str(e))
         return {"status": "ERROR", "message": "An error occurred while retrieving weather information"}
+
 
 def search_activities(city: str, activity_type: str = None) -> dict:
     """Search for activities in a city."""
     func_name = "search_activities"
     params = {"city": city, "activity_type": activity_type}
-    
+
     try:
         matching_activities = []
         for activity_id, activity in MOCK_DATA_STORE["activities"].items():
             if activity["city"].lower() == city.lower():
                 if not activity_type or activity["type"].lower() == activity_type.lower():
                     matching_activities.append(activity)
-        
+
         if not matching_activities:
-            log_travel_interaction(func_name, params, status="NO_ACTIVITIES_FOUND", 
-                                 error_message=f"No activities found in {city}")
+            log_travel_interaction(func_name, params, status="NO_ACTIVITIES_FOUND",
+                                   error_message=f"No activities found in {city}")
             return {"status": "NO_ACTIVITIES_FOUND", "message": f"No activities found in {city}", "activities": []}
-        
-        log_travel_interaction(func_name, params, status="SUCCESS", 
-                             result_summary=f"Found {len(matching_activities)} activity(ies)")
+
+        log_travel_interaction(func_name, params, status="SUCCESS",
+                               result_summary=f"Found {len(matching_activities)} activity(ies)")
         return {"status": "SUCCESS", "activities": matching_activities}
-        
+
     except Exception as e:
-        log_travel_interaction(func_name, params, status="ERROR", error_message=str(e))
+        log_travel_interaction(
+            func_name, params, status="ERROR", error_message=str(e))
         return {"status": "ERROR", "message": "An error occurred while searching activities"}
+
 
 # Initialize mock data when module is imported
 initialize_mock_data()
 
 # Test function for connectivity (maintaining compatibility)
+
+
 def test_travel_system():
     """Test the travel mock system."""
     func_name = "test_travel_system"
     params = {}
-    
+
     try:
         # Test basic functionality
         flights = search_flights("Mumbai", "Dubai", "2024-02-15")
         hotels = search_hotels("Dubai", "2024-02-15", "2024-02-17")
-        
+
         result_summary = f"Travel system test successful. Found {len(flights.get('flights', []))} flights and {len(hotels.get('hotels', []))} hotels."
-        log_travel_interaction(func_name, params, status="SUCCESS", result_summary=result_summary)
+        log_travel_interaction(
+            func_name, params, status="SUCCESS", result_summary=result_summary)
         return {"status": "SUCCESS", "message": result_summary}
-        
+
     except Exception as e:
-        log_travel_interaction(func_name, params, status="ERROR", error_message=str(e))
+        log_travel_interaction(
+            func_name, params, status="ERROR", error_message=str(e))
         return {"status": "ERROR", "message": f"Travel system test failed: {str(e)}"}
+
 
 # Example usage (for testing purposes)
 if __name__ == "__main__":
