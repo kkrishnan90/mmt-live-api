@@ -24,9 +24,16 @@ const MAX_AUDIO_CONTEXT_RECOVERY_ATTEMPTS = 5; // Maximum AudioContext recovery 
 const AUDIO_CONTEXT_RECOVERY_DELAY = 1000; // Base delay for AudioContext recovery
 
 const LANGUAGES = [
-  {code: "en-US", name: "English"},
-  {code: "th-TH", name: "Thai"},
-  {code: "id-ID", name: "Indonesian"},
+  {code: "en-IN", name: "English (Hinglish)"},
+  {code: "hi-IN", name: "हिंदी (Hindi)"},
+  {code: "mr-IN", name: "मराठी (Marathi)"},
+  {code: "ta-IN", name: "தமிழ் (Tamil)"},
+  {code: "bn-IN", name: "বাংলা (Bengali)"},
+  {code: "te-IN", name: "తెలుగు (Telugu)"},
+  {code: "gu-IN", name: "ગુજરાતી (Gujarati)"},
+  {code: "kn-IN", name: "ಕನ್ನಡ (Kannada)"},
+  {code: "ml-IN", name: "മലയാളം (Malayalam)"},
+  {code: "pa-IN", name: "ਪੰਜਾਬੀ (Punjabi)"},
 ];
 
 // const BACKEND_HOST =  'gemini-backend-service-1018963165306.us-central1.run.app';

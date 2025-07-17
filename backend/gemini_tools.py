@@ -27,10 +27,10 @@ def _log_tool_event(event_type: str, tool_name: str, parameters: dict, response:
         log_payload["response_received"] = response
     print(json.dumps(log_payload))
 
-# Function Declaration for searchFlights
+# Function Declaration for searchFlights (Customer Support Context)
 searchFlights_declaration = types.FunctionDeclaration(
     name="searchFlights",
-    description="Searches for available flights based on origin, destination, and travel date.",
+    description="[CUSTOMER SUPPORT] Searches for alternative flights when customer needs to change their booking or find new options. Use only when customer specifically requests flight search for rebooking or new travel.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
@@ -43,10 +43,10 @@ searchFlights_declaration = types.FunctionDeclaration(
     )
 )
 
-# Function Declaration for bookFlight
+# Function Declaration for bookFlight (LIMITED CUSTOMER SUPPORT USE)
 bookFlight_declaration = types.FunctionDeclaration(
     name="bookFlight",
-    description="Books a flight for the user using the flight ID from search results.",
+    description="[LIMITED CUSTOMER SUPPORT USE] Books a new flight - use only when customer specifically requests rebooking after a cancellation or needs emergency rebooking. Generally redirect customers to website/app for new bookings. Focus on post-booking support instead.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
@@ -59,10 +59,10 @@ bookFlight_declaration = types.FunctionDeclaration(
     )
 )
 
-# Function Declaration for getFlightStatus
+# Function Declaration for getFlightStatus (CRITICAL CUSTOMER SUPPORT)
 getFlightStatus_declaration = types.FunctionDeclaration(
     name="getFlightStatus",
-    description="Retrieves the current status of a booked flight using the booking ID.",
+    description="[CRITICAL CUSTOMER SUPPORT] Checks real-time flight status for customer inquiries about delays, gate changes, or departure updates. Use when customers ask about flight status, 'is my flight on time', 'what gate', or any flight timing questions.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
@@ -106,10 +106,10 @@ bookHotel_declaration = types.FunctionDeclaration(
     )
 )
 
-# Function Declaration for getBookingDetails
+# Function Declaration for getBookingDetails (PRIMARY CUSTOMER SUPPORT)
 getBookingDetails_declaration = types.FunctionDeclaration(
     name="getBookingDetails",
-    description="Retrieves detailed information about a booking using the booking ID.",
+    description="[PRIMARY CUSTOMER SUPPORT] Retrieves comprehensive booking information when customers inquire about their reservations. Use this for any customer questions about their bookings, travel details, or confirmation needs. Always use this first when customer mentions a booking ID.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
@@ -119,20 +119,20 @@ getBookingDetails_declaration = types.FunctionDeclaration(
     )
 )
 
-# Function Declaration for listUserBookings
+# Function Declaration for listUserBookings (HIGH PRIORITY CUSTOMER SUPPORT)
 listUserBookings_declaration = types.FunctionDeclaration(
     name="listUserBookings",
-    description="Lists all bookings for the current user.",
+    description="[HIGH PRIORITY CUSTOMER SUPPORT] Shows all customer bookings when they ask 'show me my bookings', 'what bookings do I have', or need to see their travel history. Use when customer wants overview of all their reservations.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={}
     )
 )
 
-# Function Declaration for cancelBooking
+# Function Declaration for cancelBooking (ESSENTIAL CUSTOMER SUPPORT)
 cancelBooking_declaration = types.FunctionDeclaration(
     name="cancelBooking",
-    description="Cancels an existing booking using the booking ID.",
+    description="[ESSENTIAL CUSTOMER SUPPORT] Processes booking cancellations when customers need to cancel their reservations. Use when customers say 'cancel my booking', 'I want to cancel', or need to cancel due to emergencies. Always confirm details before executing.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
@@ -252,7 +252,7 @@ async def getFlightStatus(booking_id: str):
     tool_name = "getFlightStatus"
     params_sent = {"booking_id": booking_id}
     _log_tool_event("INVOCATION_START", tool_name, params_sent)
-    logger.info(f"[{tool_name}] Attempting to get flight status for booking {booking_id}")
+    logger.info(f"[CUSTOMER SUPPORT - {tool_name}] Customer checking flight status for booking ID: {booking_id[-5:]} (critical support query)")
     
     try:
         result = travel_mock_data.get_flight_status(booking_id)
@@ -346,7 +346,7 @@ async def getBookingDetails(booking_id: str):
     tool_name = "getBookingDetails"
     params_sent = {"booking_id": booking_id}
     _log_tool_event("INVOCATION_START", tool_name, params_sent)
-    logger.info(f"[{tool_name}] Attempting to get booking details for {booking_id}")
+    logger.info(f"[CUSTOMER SUPPORT - {tool_name}] Customer inquiry for booking ID: {booking_id[-5:]} (showing last 5 digits only)")
     
     try:
         result = travel_mock_data.get_booking_details(booking_id)
@@ -374,7 +374,7 @@ async def listUserBookings():
     tool_name = "listUserBookings"
     params_sent = {}
     _log_tool_event("INVOCATION_START", tool_name, params_sent)
-    logger.info(f"[{tool_name}] Attempting to list all bookings for user {USER_ID}")
+    logger.info(f"[CUSTOMER SUPPORT - {tool_name}] Customer requesting all bookings overview for user {USER_ID}")
     
     try:
         result = travel_mock_data.list_user_bookings(USER_ID)
@@ -408,7 +408,7 @@ async def cancelBooking(booking_id: str):
     tool_name = "cancelBooking"
     params_sent = {"booking_id": booking_id}
     _log_tool_event("INVOCATION_START", tool_name, params_sent)
-    logger.info(f"[{tool_name}] Attempting to cancel booking {booking_id}")
+    logger.info(f"[CUSTOMER SUPPORT - {tool_name}] Customer requesting cancellation for booking ID: {booking_id[-5:]} (sensitive support action)")
     
     try:
         result = travel_mock_data.cancel_booking(booking_id)
