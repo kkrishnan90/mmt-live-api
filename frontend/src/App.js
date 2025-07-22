@@ -14,7 +14,7 @@ import {
 // Constants
 const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 24000;
-const MIC_BUFFER_SIZE = 4096;
+const MIC_BUFFER_SIZE = 2048;
 const AUDIO_WORKLET_URL = '/audio-processor.js';
 const MAX_AUDIO_QUEUE_SIZE = 50; // Maximum audio chunks in queue
 const WEBSOCKET_SEND_BUFFER_LIMIT = 65536; // 64KB buffer limit
@@ -119,8 +119,9 @@ const App = () => {
   }, [isRecording]);
 
   const addLogEntry = useCallback((type, content) => {
-    if (type === "gemini_audio" || type === "mic_control") {
-      // console.log(`[UI_PANEL_FILTERED] Type: ${type}, Content: "${content}"`);
+    // Only show tool calls and errors in the console
+    const allowedTypes = ["toolcall", "error"];
+    if (!allowedTypes.includes(type)) {
       return;
     }
     const newEntry = {
@@ -139,11 +140,17 @@ const App = () => {
       if (!response.ok)
         throw new Error(`HTTP error! status: ${response.status}`);
       const data = await response.json();
-      const newLogEntries = data.map((log) => ({
+      const toolLogs = data.filter(
+        (log) =>
+          typeof log === "object" &&
+          log !== null &&
+          (log.operation || log.tool_function_name)
+      );
+
+      const newLogEntries = toolLogs.map((log) => ({
         id: generateUniqueId(),
         type: "toolcall",
-        content:
-          typeof log === "string" ? log : log.message || JSON.stringify(log),
+        content: JSON.stringify(log),
         timestamp: log.timestamp
           ? new Date(log.timestamp).toLocaleTimeString()
           : new Date().toLocaleTimeString(),
@@ -535,13 +542,24 @@ const App = () => {
   // WebSocket backpressure handling (moved up to fix dependency order)
   const checkWebSocketBackpressure = useCallback(() => {
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
-      return false;
+      return true; // Indicate backpressure if the socket is not open
     }
-    
-    // Check if WebSocket send buffer is getting full
+
     const sendBufferSize = socketRef.current.bufferedAmount || 0;
-    return sendBufferSize > WEBSOCKET_SEND_BUFFER_LIMIT;
-  }, []);
+    const latency = lastSendTimeRef.current > 0 ? Date.now() - lastSendTimeRef.current : 0;
+
+    if (sendBufferSize > WEBSOCKET_SEND_BUFFER_LIMIT) {
+      addLogEntry("backpressure", `High buffer: ${sendBufferSize} bytes`);
+      return true;
+    }
+
+    if (latency > 500) { // 500ms latency threshold
+      addLogEntry("backpressure", `High latency: ${latency}ms`);
+      return true;
+    }
+
+    return false;
+  }, [addLogEntry]);
 
   // Exponential backoff delay function
   const getRetryDelay = useCallback((attempt) => {
@@ -646,6 +664,7 @@ const App = () => {
         break;
         
       case 'BARGE_IN_DETECTED':
+        addLogEntry("vad_activation", `VAD Activated: User speech detected during playback.`);
         if (isPlayingRef.current) {
           addLogEntry(
             "barge_in", 

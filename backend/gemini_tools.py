@@ -1,6 +1,5 @@
 from google.genai import types
 import travel_mock_data
-from travel_mock_data import USER_ID
 import json
 from datetime import datetime, timezone
 import logging
@@ -8,532 +7,590 @@ import logging
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(name)s - %(funcName)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    format="%(asctime)s - %(levelname)s - %(name)s - %(funcName)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
+
 # Helper function for structured logging
-def _log_tool_event(event_type: str, tool_name: str, parameters: dict, response: dict = None):
+def _log_tool_event(
+    event_type: str, tool_name: str, parameters: dict, response: dict = None
+):
     """Helper function to create and print a structured log entry for tool events."""
     log_payload = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "log_type": "TOOL_EVENT",
         "event_subtype": event_type,
         "tool_function_name": tool_name,
-        "parameters_sent": parameters
+        "parameters_sent": parameters,
     }
     if response is not None:
         log_payload["response_received"] = response
     print(json.dumps(log_payload))
 
-# Function Declaration for searchFlights (Customer Support Context)
-searchFlights_declaration = types.FunctionDeclaration(
-    name="searchFlights",
-    description="[CUSTOMER SUPPORT] Searches for alternative flights when customer needs to change their booking or find new options. Use only when customer specifically requests flight search for rebooking or new travel.",
+
+# Function Declarations from tool_call.json
+
+NameCorrectionAgent_declaration = types.FunctionDeclaration(
+    name="NameCorrectionAgent",
+    description="This **NameCorrectionAgent** will take care of name corrections  as well as name change also for given bookingID/PNR. This agent handles various types of name corrections including spelling corrections, name swaps, gender corrections, maiden name changes, and title removals.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
-            "origin": types.Schema(type=types.Type.STRING, description="The departure city or airport code (e.g., 'Mumbai', 'BOM')."),
-            "destination": types.Schema(type=types.Type.STRING, description="The arrival city or airport code (e.g., 'Dubai', 'DXB')."),
-            "departure_date": types.Schema(type=types.Type.STRING, description="The departure date in YYYY-MM-DD format."),
-            "passengers": types.Schema(type=types.Type.INTEGER, description="The number of passengers (defaults to 1).")
+            "correction_type": types.Schema(
+                type=types.Type.STRING,
+                description="Type of name correction required.",
+                enum=[
+                    "NAME_CORRECTION",
+                    "NAME_SWAP",
+                    "GENDER_SWAP",
+                    "MAIDEN_NAME_CHANGE",
+                    "REMOVE_TITLE",
+                ],
+            ),
+            "fn": types.Schema(
+                type=types.Type.STRING, description="First Name of the passenger."
+            ),
+            "ln": types.Schema(
+                type=types.Type.STRING, description="Last Name of the passenger."
+            ),
         },
-        required=["origin", "destination", "departure_date"]
-    )
+        required=["correction_type", "fn", "ln"],
+    ),
 )
 
-# Function Declaration for bookFlight (LIMITED CUSTOMER SUPPORT USE)
-bookFlight_declaration = types.FunctionDeclaration(
-    name="bookFlight",
-    description="[LIMITED CUSTOMER SUPPORT USE] Books a new flight - use only when customer specifically requests rebooking after a cancellation or needs emergency rebooking. Generally redirect customers to website/app for new bookings. Focus on post-booking support instead.",
+SpecialClaimAgent_declaration = types.FunctionDeclaration(
+    name="SpecialClaimAgent",
+    description="This **SpecialClaimAgent** handles special claim requests for flight bookings. This agent helps users file claims for various flight-related issues and disruptions.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
-            "flight_id": types.Schema(type=types.Type.STRING, description="The unique flight ID from search results."),
-            "passenger_name": types.Schema(type=types.Type.STRING, description="The name of the passenger."),
-            "passenger_email": types.Schema(type=types.Type.STRING, description="The email address of the passenger."),
-            "passengers": types.Schema(type=types.Type.INTEGER, description="The number of passengers (defaults to 1).")
+            "claim_type": types.Schema(
+                type=types.Type.STRING,
+                description="Type of special claim being filed by the user",
+                enum=[
+                    "FLIGHT_NOT_OPERATIONAL",
+                    "MEDICAL_EMERGENCY",
+                    "TICKET_CANCELLED_WITH_AIRLINE",
+                ],
+            )
         },
-        required=["flight_id", "passenger_name", "passenger_email"]
-    )
+        required=["claim_type"],
+    ),
 )
 
-# Function Declaration for getFlightStatus (CRITICAL CUSTOMER SUPPORT)
-getFlightStatus_declaration = types.FunctionDeclaration(
-    name="getFlightStatus",
-    description="**MANDATORY CALL** when customer asks about flight status, delays, gate info, 'is my flight on time', 'what gate', 'flight timing', or any flight status questions. Requires booking ID. Provides real-time flight status, gate, terminal, and timing information.",
+Enquiry_Tool_declaration = types.FunctionDeclaration(
+    name="Enquiry_Tool",
+    description="Helps user to get related documents for user query. Only help to retrieve relevant documentation for a enquiry or support.",
+    parameters=types.Schema(type=types.Type.OBJECT, properties={}),
+)
+
+Eticket_Sender_Agent_declaration = types.FunctionDeclaration(
+    name="Eticket_Sender_Agent",
+    description="Sends the e-ticket for the given PNR or Booking ID via supported communication channels whatsapp and email.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
-            "booking_id": types.Schema(type=types.Type.STRING, description="The booking reference ID for the flight.")
+            "booking_id_or_pnr": types.Schema(
+                type=types.Type.STRING,
+                description="The booking ID or PNR of the user itinerary.",
+            )
         },
-        required=["booking_id"]
-    )
+        required=["booking_id_or_pnr"],
+    ),
 )
 
-# Function Declaration for searchHotels
-searchHotels_declaration = types.FunctionDeclaration(
-    name="searchHotels",
-    description="Searches for available hotels in a city for specified dates.",
+ObservabilityAgent_declaration = types.FunctionDeclaration(
+    name="ObservabilityAgent",
+    description="This tool tracks or fetches the refund status for a given Booking ID based on a specific user operation.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
-            "city": types.Schema(type=types.Type.STRING, description="The city where you want to stay."),
-            "check_in_date": types.Schema(type=types.Type.STRING, description="The check-in date in YYYY-MM-DD format."),
-            "check_out_date": types.Schema(type=types.Type.STRING, description="The check-out date in YYYY-MM-DD format."),
-            "guests": types.Schema(type=types.Type.INTEGER, description="The number of guests (defaults to 1).")
+            "operation_type": types.Schema(
+                type=types.Type.STRING,
+                description="Type of operation_type being filed by the user",
+                enum=["CANCELLATION", "DATE_CHANGE"],
+            )
         },
-        required=["city", "check_in_date", "check_out_date"]
-    )
+        required=["operation_type"],
+    ),
 )
 
-# Function Declaration for bookHotel
-bookHotel_declaration = types.FunctionDeclaration(
-    name="bookHotel",
-    description="Books a hotel room for the user using the hotel ID from search results.",
+DateChangeAgent_declaration = types.FunctionDeclaration(
+    name="DateChangeAgent",
+    description="Quotes penalties or executes date change for an existing itinerary.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
-            "hotel_id": types.Schema(type=types.Type.STRING, description="The unique hotel ID from search results."),
-            "guest_name": types.Schema(type=types.Type.STRING, description="The name of the guest."),
-            "guest_email": types.Schema(type=types.Type.STRING, description="The email address of the guest."),
-            "check_in_date": types.Schema(type=types.Type.STRING, description="The check-in date in YYYY-MM-DD format."),
-            "check_out_date": types.Schema(type=types.Type.STRING, description="The check-out date in YYYY-MM-DD format."),
-            "rooms": types.Schema(type=types.Type.INTEGER, description="The number of rooms to book (defaults to 1).")
+            "action": types.Schema(
+                type=types.Type.STRING,
+                description="Choose QUOTE to fetch penalty/fare difference information, CONFIRM to execute the date change.",
+                enum=["QUOTE", "CONFIRM"],
+            ),
+            "sector_info": types.Schema(
+                type=types.Type.ARRAY,
+                description="List of sectors/journeys to change with their new dates.",
+                items=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "origin": types.Schema(
+                            type=types.Type.STRING,
+                            description="Airport Code of the origin city (e.g., DEL).",
+                        ),
+                        "destination": types.Schema(
+                            type=types.Type.STRING,
+                            description="Airport Code of the destination city (e.g., BOM).",
+                        ),
+                        "newDate": types.Schema(
+                            type=types.Type.STRING,
+                            description="New date for the journey in YYYY-MM-DD format (e.g., 2024-01-15).",
+                        ),
+                    },
+                    required=["origin", "destination", "newDate"],
+                ),
+            ),
         },
-        required=["hotel_id", "guest_name", "guest_email", "check_in_date", "check_out_date"]
-    )
+        required=["action", "sector_info"],
+    ),
 )
 
-# Function Declaration for getBookingDetails (PRIMARY CUSTOMER SUPPORT)
-getBookingDetails_declaration = types.FunctionDeclaration(
-    name="getBookingDetails",
-    description="**MANDATORY CALL** when customer mentions ANY booking ID (BK001, BK002, etc). Customer says 'check booking BK001' or 'my booking BK001' → IMMEDIATELY call this function. Gets comprehensive booking information including flight/hotel details, passenger info, costs, and status.",
+Connect_To_Human_Tool_declaration = types.FunctionDeclaration(
+    name="Connect_To_Human_Tool",
+    description="Helps user to connect with human agent.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
-            "booking_id": types.Schema(type=types.Type.STRING, description="The booking reference ID.")
+            "reason_of_invoke": types.Schema(
+                type=types.Type.STRING,
+                description="Was the user frustrated or you are not able to help.",
+                enum=["FRUSTRATED", "UNABLE_TO_HELP"],
+            ),
+            "frustration_score": types.Schema(
+                type=types.Type.STRING,
+                description="How frustrated is the user in the conversation on a scale of 1 to 10.",
+            ),
         },
-        required=["booking_id"]
-    )
+        required=["reason_of_invoke"],
+    ),
 )
 
-# Function Declaration for listUserBookings (HIGH PRIORITY CUSTOMER SUPPORT)
-listUserBookings_declaration = types.FunctionDeclaration(
-    name="listUserBookings",
-    description="**MANDATORY CALL** when customer asks 'show my bookings', 'list my bookings', 'what bookings do I have', or wants to see all their reservations. No parameters needed - just call immediately when customer requests booking list.",
-    parameters=types.Schema(
-        type=types.Type.OBJECT,
-        properties={}
-    )
-)
-
-# Function Declaration for cancelBooking (ESSENTIAL CUSTOMER SUPPORT)
-cancelBooking_declaration = types.FunctionDeclaration(
-    name="cancelBooking",
-    description="[ESSENTIAL CUSTOMER SUPPORT] Processes booking cancellations when customers need to cancel their reservations. Use when customers say 'cancel my booking', 'I want to cancel', or need to cancel due to emergencies. Always confirm details before executing.",
+Booking_Cancellation_Agent_declaration = types.FunctionDeclaration(
+    name="Booking_Cancellation_Agent",
+    description="Quotes penalties or executes cancellations for an existing itinerary.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
-            "booking_id": types.Schema(type=types.Type.STRING, description="The booking reference ID to cancel.")
+            "action": types.Schema(
+                type=types.Type.STRING,
+                description="Choose QUOTE to fetch refund/penalty information, CONFIRM to execute the cancellation.",
+                enum=["QUOTE", "CONFIRM"],
+                default="QUOTE",
+            ),
+            "cancel_scope": types.Schema(
+                type=types.Type.STRING,
+                description="Defaults to NOT_MENTIONED. Type of cancellation - FULL or PARTIAL. Don't ask this information upfront. ONLY fill when user mentions about it.",
+                enum=["NOT_MENTIONED", "FULL", "PARTIAL"],
+                default="NOT_MENTIONED",
+            ),
+            "otp": types.Schema(
+                type=types.Type.STRING,
+                description="OTP (One Time Password) for confirmation use case. And it's length is **4 digit**. NOT A MANDATORY FIELD.",
+                default="",
+            ),
+            "partial_info": types.Schema(
+                type=types.Type.ARRAY,
+                description="Required **only** when cancel_scope = PARTIAL. Provide a list of journeys and passengers to cancel.",
+                items=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "journey": types.Schema(
+                            type=types.Type.OBJECT,
+                            properties={
+                                "from_city": types.Schema(
+                                    type=types.Type.STRING,
+                                    description="Airport Code of the origin city (e.g., DEL).",
+                                ),
+                                "to_city": types.Schema(
+                                    type=types.Type.STRING,
+                                    description="Airport Code of the destination city (e.g., BOM).",
+                                ),
+                            },
+                        ),
+                        "pax_to_cancel": types.Schema(
+                            type=types.Type.ARRAY,
+                            description="List of passengers to cancel for the specified journey.",
+                            items=types.Schema(
+                                type=types.Type.OBJECT,
+                                properties={
+                                    "fn": types.Schema(
+                                        type=types.Type.STRING,
+                                        description="First Name of the passenger.",
+                                    ),
+                                    "ln": types.Schema(
+                                        type=types.Type.STRING,
+                                        description="Last Name of the passenger.",
+                                    ),
+                                },
+                            ),
+                        ),
+                    },
+                ),
+            ),
         },
-        required=["booking_id"]
-    )
+        required=["action"],
+    ),
 )
 
-# Function Declaration for getDestinationInfo
-getDestinationInfo_declaration = types.FunctionDeclaration(
-    name="getDestinationInfo",
-    description="Gets detailed information about a travel destination including attractions and best time to visit.",
+Flight_Booking_Details_Agent_declaration = types.FunctionDeclaration(
+    name="Flight_Booking_Details_Agent",
+    description="Retrieves the full itinerary record for a given PNR / Booking ID—passengers, flight segments, departure & arrival times, airlines, fare classes, and ancillary add-ons.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
-            "city": types.Schema(type=types.Type.STRING, description="The destination city name.")
+            "booking_id_or_pnr": types.Schema(
+                type=types.Type.STRING,
+                description="The booking ID or PNR of the user itinerary.",
+            )
         },
-        required=["city"]
-    )
+        required=["booking_id_or_pnr"],
+    ),
 )
 
-# Function Declaration for getWeatherInfo
-getWeatherInfo_declaration = types.FunctionDeclaration(
-    name="getWeatherInfo",
-    description="Gets current weather and forecast information for a destination.",
+Webcheckin_And_Boarding_Pass_Agent_declaration = types.FunctionDeclaration(
+    name="Webcheckin_And_Boarding_Pass_Agent",
+    description="This **Webcheckin_And_Boarding_Pass_Agent** agents will take care of web checkin and boarding pass for given bookingID/PNR. If user is already checked-in this agent will send boarding pass given PNR / Booking ID  via supported communication channels such as WhatsApp, email, or SMS.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
-            "city": types.Schema(type=types.Type.STRING, description="The city name for weather information.")
+            "journeys": types.Schema(
+                type=types.Type.ARRAY,
+                description="List of journeys for which user wants to do web check-in. Each journey can have different passengers.",
+                items=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "origin": types.Schema(
+                            type=types.Type.STRING,
+                            description="Airport Code of the origin city (e.g., DEL).",
+                        ),
+                        "destination": types.Schema(
+                            type=types.Type.STRING,
+                            description="Airport Code of the destination city (e.g., BOM).",
+                        ),
+                        "isAllPax": types.Schema(
+                            type=types.Type.STRING,
+                            description="Set to true if user wants web check-in for all passengers on this journey, false if for specific passengers only.",
+                            default="true",
+                        ),
+                        "pax_info": types.Schema(
+                            type=types.Type.ARRAY,
+                            description="Required **only** when isAllPax = false. Provide list of specific passengers for web check-in on this journey.",
+                            items=types.Schema(
+                                type=types.Type.OBJECT,
+                                properties={
+                                    "fn": types.Schema(
+                                        type=types.Type.STRING,
+                                        description="First Name of the passenger.",
+                                    ),
+                                    "ln": types.Schema(
+                                        type=types.Type.STRING,
+                                        description="Last Name of the passenger.",
+                                    ),
+                                },
+                                required=["fn", "ln"],
+                            ),
+                        ),
+                    },
+                    required=["origin", "destination", "isAllPax"],
+                ),
+            )
         },
-        required=["city"]
-    )
+        required=["journeys"],
+    ),
 )
 
-# Function Declaration for searchActivities
-searchActivities_declaration = types.FunctionDeclaration(
-    name="searchActivities",
-    description="Searches for activities and attractions in a destination city.",
-    parameters=types.Schema(
-        type=types.Type.OBJECT,
-        properties={
-            "city": types.Schema(type=types.Type.STRING, description="The destination city name."),
-            "activity_type": types.Schema(type=types.Type.STRING, description="Optional. The type of activity (e.g., 'Sightseeing', 'Adventure', 'Cultural').")
-        },
-        required=["city"]
-    )
-)
+# Python function implementations
 
-# Actual Python function implementations
 
-async def searchFlights(origin: str, destination: str, departure_date: str, passengers: int = 1):
-    tool_name = "searchFlights"
-    params_sent = {"origin": origin, "destination": destination, "departure_date": departure_date, "passengers": passengers}
+async def NameCorrectionAgent(correction_type: str, fn: str, ln: str) -> dict:
+    """Processes name corrections for a booking.
+
+    This agent handles various types of name corrections, including spelling
+    corrections, name swaps, gender corrections, maiden name changes, and
+    title removals.
+
+    Args:
+        correction_type (str): The type of name correction to perform.
+            Supported values: "NAME_CORRECTION", "NAME_SWAP", "GENDER_SWAP",
+            "MAIDEN_NAME_CHANGE", "REMOVE_TITLE".
+        fn (str): The first name of the passenger.
+        ln (str): The last name of the passenger.
+
+    Returns:
+        dict: A dictionary containing the status of the operation and a
+              confirmation message.
+    """
+    tool_name = "NameCorrectionAgent"
+    params_sent = {"correction_type": correction_type, "fn": fn, "ln": ln}
     _log_tool_event("INVOCATION_START", tool_name, params_sent)
-    logger.info(f"[{tool_name}] Attempting to search flights from {origin} to {destination} on {departure_date}")
-    
-    try:
-        result = travel_mock_data.search_flights(origin, destination, departure_date, passengers)
-        logger.info(f"[{tool_name}] Received from travel_mock_data.search_flights: {result}")
-        
-        if result.get("status") == "SUCCESS":
-            api_response = {
-                "status": "success",
-                "flights": result.get("flights", []),
-                "message": f"Found {len(result.get('flights', []))} flights from {origin} to {destination}"
-            }
-        elif result.get("status") == "NO_FLIGHTS_FOUND":
-            api_response = {
-                "status": "no_results",
-                "message": result.get("message", f"No flights found from {origin} to {destination}"),
-                "flights": []
-            }
-        else:
-            api_response = {
-                "status": "error",
-                "message": result.get("message", "Failed to search flights")
-            }
-    except Exception as e:
-        logger.error(f"[{tool_name}] Error calling travel_mock_data.search_flights: {e}", exc_info=True)
-        api_response = {"status": "error", "message": f"An internal error occurred while searching flights"}
-    
-    _log_tool_event("INVOCATION_END", tool_name, params_sent, api_response)
-    return api_response
+    # Mock implementation
+    response = {
+        "status": "SUCCESS",
+        "message": f"Name correction of type {correction_type} for {fn} {ln} has been processed.",
+    }
+    _log_tool_event("INVOCATION_END", tool_name, params_sent, response)
+    return response
 
-async def bookFlight(flight_id: str, passenger_name: str, passenger_email: str, passengers: int = 1):
-    tool_name = "bookFlight"
-    params_sent = {"flight_id": flight_id, "passenger_name": passenger_name, "passenger_email": passenger_email, "passengers": passengers}
+
+async def SpecialClaimAgent(claim_type: str) -> dict:
+    """Files a special claim for a flight booking.
+
+    This agent helps users file claims for various flight-related issues and
+    disruptions.
+
+    Args:
+        claim_type (str): The type of special claim to file. Supported
+            values: "FLIGHT_NOT_OPERATIONAL", "MEDICAL_EMERGENCY",
+            "TICKET_CANCELLED_WITH_AIRLINE".
+
+    Returns:
+        dict: A dictionary containing the status of the operation and a
+              confirmation message.
+    """
+    tool_name = "SpecialClaimAgent"
+    params_sent = {"claim_type": claim_type}
     _log_tool_event("INVOCATION_START", tool_name, params_sent)
-    logger.info(f"[{tool_name}] Attempting to book flight {flight_id} for {passenger_name}")
-    
-    try:
-        result = travel_mock_data.book_flight(flight_id, passenger_name, passenger_email, passengers)
-        logger.info(f"[{tool_name}] Received from travel_mock_data.book_flight: {result}")
-        
-        if result.get("status") == "SUCCESS":
-            api_response = {
-                "status": "success",
-                "message": result.get("message"),
-                "booking_id": result.get("booking_id"),
-                "total_cost": result.get("total_cost"),
-                "currency": result.get("currency")
-            }
-        else:
-            api_response = {
-                "status": "error",
-                "message": result.get("message", "Failed to book flight")
-            }
-    except Exception as e:
-        logger.error(f"[{tool_name}] Error calling travel_mock_data.book_flight: {e}", exc_info=True)
-        api_response = {"status": "error", "message": "An internal error occurred while booking the flight"}
-    
-    _log_tool_event("INVOCATION_END", tool_name, params_sent, api_response)
-    return api_response
+    # Mock implementation
+    response = {
+        "status": "SUCCESS",
+        "message": f"Special claim of type {claim_type} has been filed.",
+    }
+    _log_tool_event("INVOCATION_END", tool_name, params_sent, response)
+    return response
 
-async def getFlightStatus(booking_id: str):
-    tool_name = "getFlightStatus"
-    params_sent = {"booking_id": booking_id}
-    _log_tool_event("INVOCATION_START", tool_name, params_sent)
-    logger.info(f"[CUSTOMER SUPPORT - {tool_name}] Customer checking flight status for booking ID: {booking_id[-5:]} (critical support query)")
-    
-    try:
-        result = travel_mock_data.get_flight_status(booking_id)
-        logger.info(f"[{tool_name}] Received from travel_mock_data.get_flight_status: {result}")
-        
-        if result.get("status") == "SUCCESS":
-            api_response = {
-                "status": "success",
-                "flight_status": result.get("flight_status"),
-                "message": "Flight status retrieved successfully"
-            }
-        else:
-            api_response = {
-                "status": "error",
-                "message": result.get("message", "Failed to retrieve flight status")
-            }
-    except Exception as e:
-        logger.error(f"[{tool_name}] Error calling travel_mock_data.get_flight_status: {e}", exc_info=True)
-        api_response = {"status": "error", "message": "An internal error occurred while retrieving flight status"}
-    
-    _log_tool_event("INVOCATION_END", tool_name, params_sent, api_response)
-    return api_response
 
-async def searchHotels(city: str, check_in_date: str, check_out_date: str, guests: int = 1):
-    tool_name = "searchHotels"
-    params_sent = {"city": city, "check_in_date": check_in_date, "check_out_date": check_out_date, "guests": guests}
-    _log_tool_event("INVOCATION_START", tool_name, params_sent)
-    logger.info(f"[{tool_name}] Attempting to search hotels in {city} from {check_in_date} to {check_out_date}")
-    
-    try:
-        result = travel_mock_data.search_hotels(city, check_in_date, check_out_date, guests)
-        logger.info(f"[{tool_name}] Received from travel_mock_data.search_hotels: {result}")
-        
-        if result.get("status") == "SUCCESS":
-            api_response = {
-                "status": "success",
-                "hotels": result.get("hotels", []),
-                "message": f"Found {len(result.get('hotels', []))} hotels in {city}"
-            }
-        elif result.get("status") == "NO_HOTELS_FOUND":
-            api_response = {
-                "status": "no_results",
-                "message": result.get("message", f"No hotels found in {city}"),
-                "hotels": []
-            }
-        else:
-            api_response = {
-                "status": "error",
-                "message": result.get("message", "Failed to search hotels")
-            }
-    except Exception as e:
-        logger.error(f"[{tool_name}] Error calling travel_mock_data.search_hotels: {e}", exc_info=True)
-        api_response = {"status": "error", "message": "An internal error occurred while searching hotels"}
-    
-    _log_tool_event("INVOCATION_END", tool_name, params_sent, api_response)
-    return api_response
+async def Enquiry_Tool() -> dict:
+    """Retrieves relevant documentation for a user's query.
 
-async def bookHotel(hotel_id: str, guest_name: str, guest_email: str, check_in_date: str, check_out_date: str, rooms: int = 1):
-    tool_name = "bookHotel"
-    params_sent = {"hotel_id": hotel_id, "guest_name": guest_name, "guest_email": guest_email, 
-                   "check_in_date": check_in_date, "check_out_date": check_out_date, "rooms": rooms}
-    _log_tool_event("INVOCATION_START", tool_name, params_sent)
-    logger.info(f"[{tool_name}] Attempting to book hotel {hotel_id} for {guest_name}")
-    
-    try:
-        result = travel_mock_data.book_hotel(hotel_id, guest_name, guest_email, check_in_date, check_out_date, rooms)
-        logger.info(f"[{tool_name}] Received from travel_mock_data.book_hotel: {result}")
-        
-        if result.get("status") == "SUCCESS":
-            api_response = {
-                "status": "success",
-                "message": result.get("message"),
-                "booking_id": result.get("booking_id"),
-                "total_cost": result.get("total_cost"),
-                "currency": result.get("currency"),
-                "nights": result.get("nights")
-            }
-        else:
-            api_response = {
-                "status": "error",
-                "message": result.get("message", "Failed to book hotel")
-            }
-    except Exception as e:
-        logger.error(f"[{tool_name}] Error calling travel_mock_data.book_hotel: {e}", exc_info=True)
-        api_response = {"status": "error", "message": "An internal error occurred while booking the hotel"}
-    
-    _log_tool_event("INVOCATION_END", tool_name, params_sent, api_response)
-    return api_response
+    This tool is used to fetch helpful documents and information in response
+    to a user's enquiry.
 
-async def getBookingDetails(booking_id: str):
-    tool_name = "getBookingDetails"
-    params_sent = {"booking_id": booking_id}
-    _log_tool_event("INVOCATION_START", tool_name, params_sent)
-    logger.info(f"[CUSTOMER SUPPORT - {tool_name}] Customer inquiry for booking ID: {booking_id[-5:]} (showing last 5 digits only)")
-    
-    try:
-        result = travel_mock_data.get_booking_details(booking_id)
-        logger.info(f"[{tool_name}] Received from travel_mock_data.get_booking_details: {result}")
-        
-        if result.get("status") == "SUCCESS":
-            api_response = {
-                "status": "success",
-                "booking": result.get("booking"),
-                "message": "Booking details retrieved successfully"
-            }
-        else:
-            api_response = {
-                "status": "error",
-                "message": result.get("message", "Failed to retrieve booking details")
-            }
-    except Exception as e:
-        logger.error(f"[{tool_name}] Error calling travel_mock_data.get_booking_details: {e}", exc_info=True)
-        api_response = {"status": "error", "message": "An internal error occurred while retrieving booking details"}
-    
-    _log_tool_event("INVOCATION_END", tool_name, params_sent, api_response)
-    return api_response
-
-async def listUserBookings():
-    tool_name = "listUserBookings"
+    Returns:
+        dict: A dictionary containing the status of the operation and a
+              mock response message.
+    """
+    tool_name = "Enquiry_Tool"
     params_sent = {}
     _log_tool_event("INVOCATION_START", tool_name, params_sent)
-    logger.info(f"[CUSTOMER SUPPORT - {tool_name}] Customer requesting all bookings overview for user {USER_ID}")
-    
-    try:
-        result = travel_mock_data.list_user_bookings(USER_ID)
-        logger.info(f"[{tool_name}] Received from travel_mock_data.list_user_bookings: {result}")
-        
-        if result.get("status") == "SUCCESS":
-            api_response = {
-                "status": "success",
-                "bookings": result.get("bookings", []),
-                "message": f"Found {len(result.get('bookings', []))} booking(s)"
-            }
-        elif result.get("status") == "NO_BOOKINGS_FOUND":
-            api_response = {
-                "status": "success",
-                "bookings": [],
-                "message": result.get("message", "No bookings found")
-            }
-        else:
-            api_response = {
-                "status": "error",
-                "message": result.get("message", "Failed to retrieve bookings")
-            }
-    except Exception as e:
-        logger.error(f"[{tool_name}] Error calling travel_mock_data.list_user_bookings: {e}", exc_info=True)
-        api_response = {"status": "error", "message": "An internal error occurred while retrieving bookings"}
-    
-    _log_tool_event("INVOCATION_END", tool_name, params_sent, api_response)
-    return api_response
+    # Mock implementation
+    response = {
+        "status": "SUCCESS",
+        "message": "This is a mock response to your enquiry.",
+    }
+    _log_tool_event("INVOCATION_END", tool_name, params_sent, response)
+    return response
 
-async def cancelBooking(booking_id: str):
-    tool_name = "cancelBooking"
-    params_sent = {"booking_id": booking_id}
+
+async def Eticket_Sender_Agent(booking_id_or_pnr: str) -> dict:
+    """Sends an e-ticket to the user for a given booking.
+
+    Args:
+        booking_id_or_pnr (str): The booking ID or PNR of the user's
+            itinerary.
+
+    Returns:
+        dict: A dictionary containing the status of the operation and a
+              confirmation message.
+    """
+    tool_name = "Eticket_Sender_Agent"
+    params_sent = {"booking_id_or_pnr": booking_id_or_pnr}
     _log_tool_event("INVOCATION_START", tool_name, params_sent)
-    logger.info(f"[CUSTOMER SUPPORT - {tool_name}] Customer requesting cancellation for booking ID: {booking_id[-5:]} (sensitive support action)")
-    
-    try:
-        result = travel_mock_data.cancel_booking(booking_id)
-        logger.info(f"[{tool_name}] Received from travel_mock_data.cancel_booking: {result}")
-        
-        if result.get("status") == "SUCCESS":
-            api_response = {
-                "status": "success",
-                "message": result.get("message", "Booking cancelled successfully")
-            }
-        else:
-            api_response = {
-                "status": "error",
-                "message": result.get("message", "Failed to cancel booking")
-            }
-    except Exception as e:
-        logger.error(f"[{tool_name}] Error calling travel_mock_data.cancel_booking: {e}", exc_info=True)
-        api_response = {"status": "error", "message": "An internal error occurred while cancelling the booking"}
-    
-    _log_tool_event("INVOCATION_END", tool_name, params_sent, api_response)
-    return api_response
+    # Mock implementation
+    response = {
+        "status": "SUCCESS",
+        "message": f"E-ticket for booking {booking_id_or_pnr} has been sent.",
+    }
+    _log_tool_event("INVOCATION_END", tool_name, params_sent, response)
+    return response
 
-async def getDestinationInfo(city: str):
-    tool_name = "getDestinationInfo"
-    params_sent = {"city": city}
+
+async def ObservabilityAgent(operation_type: str) -> dict:
+    """Tracks the refund status for a given booking ID.
+
+    Args:
+        operation_type (str): The type of operation for which to track the
+            refund status. Supported values: "CANCELLATION", "DATE_CHANGE".
+
+    Returns:
+        dict: A dictionary containing the status of the operation and a
+              confirmation message.
+    """
+    tool_name = "ObservabilityAgent"
+    params_sent = {"operation_type": operation_type}
     _log_tool_event("INVOCATION_START", tool_name, params_sent)
-    logger.info(f"[{tool_name}] Attempting to get destination info for {city}")
-    
-    try:
-        result = travel_mock_data.get_destination_info(city)
-        logger.info(f"[{tool_name}] Received from travel_mock_data.get_destination_info: {result}")
-        
-        if result.get("status") == "SUCCESS":
-            api_response = {
-                "status": "success",
-                "destination": result.get("destination"),
-                "message": f"Destination information retrieved for {city}"
-            }
-        else:
-            api_response = {
-                "status": "error",
-                "message": result.get("message", f"No information found for {city}")
-            }
-    except Exception as e:
-        logger.error(f"[{tool_name}] Error calling travel_mock_data.get_destination_info: {e}", exc_info=True)
-        api_response = {"status": "error", "message": "An internal error occurred while retrieving destination information"}
-    
-    _log_tool_event("INVOCATION_END", tool_name, params_sent, api_response)
-    return api_response
+    # Mock implementation
+    response = {
+        "status": "SUCCESS",
+        "message": f"Refund status for {operation_type} is being tracked.",
+    }
+    _log_tool_event("INVOCATION_END", tool_name, params_sent, response)
+    return response
 
-async def getWeatherInfo(city: str):
-    tool_name = "getWeatherInfo"
-    params_sent = {"city": city}
+
+async def DateChangeAgent(action: str, sector_info: list) -> dict:
+    """Quotes penalties or executes date change for an existing itinerary.
+
+    Args:
+        action (str): The action to perform. Supported values: "QUOTE",
+            "CONFIRM".
+        sector_info (list): A list of sectors/journeys to change, with their
+            new dates.
+
+    Returns:
+        dict: A dictionary containing the status of the operation and a
+              confirmation message.
+    """
+    tool_name = "DateChangeAgent"
+    params_sent = {"action": action, "sector_info": sector_info}
     _log_tool_event("INVOCATION_START", tool_name, params_sent)
-    logger.info(f"[{tool_name}] Attempting to get weather info for {city}")
-    
-    try:
-        result = travel_mock_data.get_weather_info(city)
-        logger.info(f"[{tool_name}] Received from travel_mock_data.get_weather_info: {result}")
-        
-        if result.get("status") == "SUCCESS":
-            api_response = {
-                "status": "success",
-                "weather": result.get("weather"),
-                "message": f"Weather information retrieved for {city}"
-            }
-        else:
-            api_response = {
-                "status": "error",
-                "message": result.get("message", f"No weather information found for {city}")
-            }
-    except Exception as e:
-        logger.error(f"[{tool_name}] Error calling travel_mock_data.get_weather_info: {e}", exc_info=True)
-        api_response = {"status": "error", "message": "An internal error occurred while retrieving weather information"}
-    
-    _log_tool_event("INVOCATION_END", tool_name, params_sent, api_response)
-    return api_response
+    # Mock implementation
+    response = {
+        "status": "SUCCESS",
+        "message": f"Date change action '{action}' has been processed for the provided sectors.",
+    }
+    _log_tool_event("INVOCATION_END", tool_name, params_sent, response)
+    return response
 
-async def searchActivities(city: str, activity_type: str = None):
-    tool_name = "searchActivities"
-    params_sent = {"city": city, "activity_type": activity_type}
+
+async def Connect_To_Human_Tool(
+    reason_of_invoke: str, frustration_score: str = None
+) -> dict:
+    """Connects the user to a human agent.
+
+    Args:
+        reason_of_invoke (str): The reason for invoking the tool. Supported
+            values: "FRUSTRATED", "UNABLE_TO_HELP".
+        frustration_score (str, optional): The user's frustration score on a
+            scale of 1 to 10. Defaults to None.
+
+    Returns:
+        dict: A dictionary containing the status of the operation and a
+              confirmation message.
+    """
+    tool_name = "Connect_To_Human_Tool"
+    params_sent = {
+        "reason_of_invoke": reason_of_invoke,
+        "frustration_score": frustration_score,
+    }
     _log_tool_event("INVOCATION_START", tool_name, params_sent)
-    logger.info(f"[{tool_name}] Attempting to search activities in {city}")
-    
-    try:
-        result = travel_mock_data.search_activities(city, activity_type)
-        logger.info(f"[{tool_name}] Received from travel_mock_data.search_activities: {result}")
-        
-        if result.get("status") == "SUCCESS":
-            api_response = {
-                "status": "success",
-                "activities": result.get("activities", []),
-                "message": f"Found {len(result.get('activities', []))} activities in {city}"
-            }
-        elif result.get("status") == "NO_ACTIVITIES_FOUND":
-            api_response = {
-                "status": "no_results",
-                "message": result.get("message", f"No activities found in {city}"),
-                "activities": []
-            }
-        else:
-            api_response = {
-                "status": "error",
-                "message": result.get("message", "Failed to search activities")
-            }
-    except Exception as e:
-        logger.error(f"[{tool_name}] Error calling travel_mock_data.search_activities: {e}", exc_info=True)
-        api_response = {"status": "error", "message": "An internal error occurred while searching activities"}
-    
-    _log_tool_event("INVOCATION_END", tool_name, params_sent, api_response)
-    return api_response
+    # Mock implementation
+    response = {"status": "SUCCESS", "message": "Connecting you to a human agent..."}
+    _log_tool_event("INVOCATION_END", tool_name, params_sent, response)
+    return response
 
-# Tool instance containing all travel function declarations
+
+async def Booking_Cancellation_Agent(
+    action: str,
+    cancel_scope: str = "NOT_MENTIONED",
+    otp: str = "",
+    partial_info: list = None,
+) -> dict:
+    """Quotes penalties or executes cancellations for an existing itinerary.
+
+    Args:
+        action (str): The action to perform. Supported values: "QUOTE",
+            "CONFIRM".
+        cancel_scope (str, optional): The scope of the cancellation.
+            Supported values: "NOT_MENTIONED", "FULL", "PARTIAL". Defaults to
+            "NOT_MENTIONED".
+        otp (str, optional): The One Time Password for confirmation. Defaults
+            to "".
+        partial_info (list, optional): A list of journeys and passengers to
+            cancel. Required only when `cancel_scope` is "PARTIAL". Defaults
+            to None.
+
+    Returns:
+        dict: A dictionary containing the status of the operation and a
+              confirmation message.
+    """
+    tool_name = "Booking_Cancellation_Agent"
+    params_sent = {
+        "action": action,
+        "cancel_scope": cancel_scope,
+        "otp": otp,
+        "partial_info": partial_info,
+    }
+    _log_tool_event("INVOCATION_START", tool_name, params_sent)
+    # Mock implementation
+    response = {
+        "status": "SUCCESS",
+        "message": f"Booking cancellation action '{action}' has been processed.",
+    }
+    _log_tool_event("INVOCATION_END", tool_name, params_sent, response)
+    return response
+
+
+async def Flight_Booking_Details_Agent(booking_id_or_pnr: str) -> dict:
+    """Retrieves the full itinerary record for a given PNR or Booking ID.
+
+    This includes passenger details, flight segments, departure and arrival
+    times, airlines, fare classes, and ancillary add-ons.
+
+    Args:
+        booking_id_or_pnr (str): The booking ID or PNR of the user's
+            itinerary.
+
+    Returns:
+        dict: A dictionary containing the booking details.
+    """
+    tool_name = "Flight_Booking_Details_Agent"
+    params_sent = {"booking_id_or_pnr": booking_id_or_pnr}
+    _log_tool_event("INVOCATION_START", tool_name, params_sent)
+    # Mock implementation
+    response = travel_mock_data.get_booking_details(booking_id_or_pnr)
+    _log_tool_event("INVOCATION_END", tool_name, params_sent, response)
+    return response
+
+
+async def Webcheckin_And_Boarding_Pass_Agent(journeys: list) -> dict:
+    """Handles web check-in and boarding pass requests.
+
+    If the user is already checked in, this agent will send the boarding pass
+    for the given PNR or Booking ID via supported communication channels such
+    as WhatsApp, email, or SMS.
+
+    Args:
+        journeys (list): A list of journeys for which the user wants to do
+            web check-in. Each journey can have different passengers.
+
+    Returns:
+        dict: A dictionary containing the status of the operation and a
+              confirmation message.
+    """
+    tool_name = "Webcheckin_And_Boarding_Pass_Agent"
+    params_sent = {"journeys": journeys}
+    _log_tool_event("INVOCATION_START", tool_name, params_sent)
+    # Mock implementation
+    response = {
+        "status": "SUCCESS",
+        "message": "Web check-in and boarding pass have been processed for the provided journeys.",
+    }
+    _log_tool_event("INVOCATION_END", tool_name, params_sent, response)
+    return response
+
+
+# Tool instance containing all function declarations
 travel_tool = types.Tool(
     function_declarations=[
-        searchFlights_declaration,
-        bookFlight_declaration,
-        getFlightStatus_declaration,
-        searchHotels_declaration,
-        bookHotel_declaration,
-        getBookingDetails_declaration,
-        listUserBookings_declaration,
-        cancelBooking_declaration,
-        getDestinationInfo_declaration,
-        getWeatherInfo_declaration,
-        searchActivities_declaration,
+        NameCorrectionAgent_declaration,
+        SpecialClaimAgent_declaration,
+        Enquiry_Tool_declaration,
+        Eticket_Sender_Agent_declaration,
+        ObservabilityAgent_declaration,
+        DateChangeAgent_declaration,
+        Connect_To_Human_Tool_declaration,
+        Booking_Cancellation_Agent_declaration,
+        Flight_Booking_Details_Agent_declaration,
+        Webcheckin_And_Boarding_Pass_Agent_declaration,
     ]
 )

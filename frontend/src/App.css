@@ -135,15 +135,28 @@ body {
 }
 
 /* Example log type styling - can be adapted */
-.log-entry-error { color: #f85149 !important; } /* Red for error (GitHub danger) */
-.log-entry-error .log-prefix { color: #f85149; }
+.log-entry-error {
+  color: #f85149 !important; /* Red for error (GitHub danger) */
+}
+.log-entry-error .log-prefix {
+  color: #f85149;
+}
 
-.log-entry-warning { color: #d29922 !important; } /* Yellow for warning (GitHub warning) */
-.log-entry-warning .log-prefix { color: #d29922; }
+.log-entry-toolcall {
+  color: #58a6ff !important; /* Blue for tool calls */
+}
 
-.log-entry-status .log-prefix,
-.log-entry-info .log-prefix {
-  color: #3fb950; /* Green for status/info (GitHub success) */
+.log-entry-vad_activation {
+  color: #d29922 !important; /* Yellow for VAD activation */
+}
+
+.log-entry-warn {
+  color: #d29922 !important; /* Yellow for warning (GitHub warning) */
+}
+
+.log-entry-info,
+.log-entry-status {
+  color: #d29922 !important; /* Yellow for other logs */
 }
 
 .main-panel {
