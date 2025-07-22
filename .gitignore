@@ -190,3 +190,14 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+# Local development files to keep out of remote
+SAMPLE_QUERIES.md
+.gemini/
+backend_url.txt
+frontend_url.txt
+system_instructions.txt
+tool_call.json
+GEMINI.md
+PLAN.md
+.gemini-clipboard/
