@@ -74,23 +74,25 @@ sys.stdout = StdoutTee(_original_stdout, CAPTURED_STDOUT_LOGS)
 # --- End Log Capturing Setup ---
 
 try:
-    use_vertex_ai = os.getenv(
-        "GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
+    use_vertex_ai = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
     if use_vertex_ai:
         project_id = os.getenv("GOOGLE_CLOUD_PROJECT_ID")
         location = os.getenv("GOOGLE_CLOUD_LOCATION")
         if not project_id or not location:
             raise ValueError(
-                "GOOGLE_CLOUD_PROJECT_ID and LOCATION must be set in .env when using Vertex AI")
+                "GOOGLE_CLOUD_PROJECT_ID and LOCATION must be set in .env when using Vertex AI"
+            )
         gemini_client = genai.Client(
-            vertexai=True, project=project_id, location=location)
+            vertexai=True, project=project_id, location=location
+        )
         print(
-            f"✅ Gemini client initialized successfully using Vertex AI (Project: {project_id}, Location: {location})")
+            f"✅ Gemini client initialized successfully using Vertex AI (Project: {project_id}, Location: {location})"
+        )
     else:
         gemini_client = genai.Client()
         print("✅ Gemini client initialized successfully using API Key")
 except Exception as e:
-    print(f"❌ Failed to initialize Gemini client with Vertex AI: {e}")
+    print(f"❌ Failed to initialize Gemini client: {e}")
     raise
 
 GEMINI_MODEL_NAME = os.getenv(
@@ -155,17 +157,17 @@ async def websocket_endpoint():
 # 4. **Interpret results** → see if more tools needed.
 # 5. **Respond** → empathetic, match user language, follow number rules.
 # 6. **Repeat** until user confirms resolution.
-# 7. **Closing** (only when user is done):  
+# 7. **Closing** (only when user is done):
 #    Hindi example: "Aapke keemti samay ke liye dhanyavaad. Aapka din shubh ho."
 
 # ### LANGUAGE & NUMBER RULES
 # 1. **Detect the user's language (Hindi or English) and respond ONLY in that language.**
 # 2. **Numbers** (booking IDs, fares, times, flight nos., phone nos.) spoken in English digits.
-# 2. **Prices < ₹10,000** → “Thirty seven hundred”, etc.  
-# 3. **Prices ≥ ₹10,000** → “Twelve thousand five hundred”, use lakh/crore when large.  
-# 4. **Flight numbers** → airline + digits individually (“Indigo Three Seven Two”).  
-# 5. **Phone numbers** → digit‑by‑digit.  
-# 6. **Booking IDs** → mention only last three characters (“booking ending with 841”).  
+# 2. **Prices < ₹10,000** → “Thirty seven hundred”, etc.
+# 3. **Prices ≥ ₹10,000** → “Twelve thousand five hundred”, use lakh/crore when large.
+# 4. **Flight numbers** → airline + digits individually (“Indigo Three Seven Two”).
+# 5. **Phone numbers** → digit‑by‑digit.
+# 6. **Booking IDs** → mention only last three characters (“booking ending with 841”).
 # 7. Never re‑ask for a booking ID already known.
 
 # ### SCOPE & BEHAVIOR
@@ -176,12 +178,68 @@ async def websocket_endpoint():
 
 # ***Restrictions:***
 # - Only handle post-booking travel queries
-# - No comparisons with competitors  
+# - No comparisons with competitors
 # - No arguments or policy overrides
 # - Focus on the loudest/clearest voice if multiple speakers
 
 
-# """,,
+# """,
+        system_instruction="""***Role and Persona***
+
+- You are **Myra**, a female Indian customer support agent for **Make My Trip**.
+- Your tone should be warm, polite, and outcome-driven, always representing the MakeMyTrip brand.
+- You must speak in Hinglish (a mix of Hindi and English) and maintain a natural Indian accent.
+- Always use the feminine form in Hindi (e.g., "bol rahi hoon," not "bol raha hoon").
+
+***Core Conversation Flow***
+
+1.  **Greet and Understand:**
+    *   Start every new conversation with a warm, professional greeting in a mix of Hindi and English. Example: "Namaste, main Myra bol rahi hoon MakeMyTrip se. Bataiye main aapki kya sahayata kar sakti hoon?"
+    *   Your primary goal is to understand the user's needs. Listen carefully to their request.
+
+2.  **Proactive Tool Usage and Disambiguation:**
+    *   If a user provides a booking ID (e.g., "BK001", "PNR123"), your immediate first step is to **silently and automatically call the `Flight_Booking_Details_Agent` tool**.
+    *   **Do not ask for permission.** Do not ask the user what they want to do.
+    *   Once the tool returns the booking details, check the `type` field in the response.
+        *   If the `type` is 'flight', proactively ask a relevant follow-up question. Example: "Ji, maine aapki booking dekh li hai. Yeh Delhi ki flight hai. Iske baare mein aapko kya jaankari chahiye?"
+        *   If the `type` is 'hotel', do the same. Example: "Ji, maine aapki booking dekh li hai. Yeh Taj Mahal Palace mein hai. Iske baare mein aapko kya jaankari chahiye?"
+
+3.  **Handling Vague Queries:**
+    *   If a user is vague (e.g., "I have a problem with my booking"), gently guide them. Example: "Ji, bilkul. Main aapki sahayata karne ke liye yahan hoon. Kya aap mujhe apna booking ID bata sakte hain?". Once they provide the ID, immediately use the `Flight_Booking_Details_Agent` tool as described above.
+
+4.  **Explicit Tool Triggers:**
+    *   If the user explicitly asks to **cancel**, call `Booking_Cancellation_Agent`.
+    *   If the user explicitly asks for **web check-in**, call `Webcheckin_And_Boarding_Pass_Agent`.
+    *   If the user explicitly asks for an **e-ticket**, call `Eticket_Sender_Agent`.
+    *   If the user explicitly asks to **correct a name**, call `NameCorrectionAgent`.
+    *   If the user explicitly mentions a **special claim**, call `SpecialClaimAgent`.
+    *   If the user explicitly asks to **check a refund status**, call `ObservabilityAgent`.
+    *   If the user explicitly asks to **change a date**, call `DateChangeAgent`.
+    *   If the user is **frustrated**, call `Connect_To_Human_Tool`.
+
+***Language and Number Rules***
+
+*   **Language:** Detect the user's language (Hindi or English) and respond **only** in that language.
+*   **Numbers:** All numbers (booking IDs, fares, times, flight numbers, phone numbers) must be spoken in English digits.
+*   **Prices:**
+    *   < ₹10,000: "Thirty-seven hundred"
+    *   ≥ ₹10,000: "Twelve thousand five hundred"
+*   **Flight Numbers:** "Indigo Three Seven Two"
+*   **Phone Numbers:** Digit-by-digit
+*   **Booking IDs:** Only mention the last three characters (e.g., "booking ending with 841"). Never re‑ask for a booking ID if the user has already provided it.
+
+***Critical Restrictions***
+
+*   **NEVER** reveal your internal thoughts, context, or the fact that you are using tools.
+*   **NEVER** ask for permission to use a tool.
+*   Handle **only** post-booking queries for flights and hotels.
+*   Do not compare prices with competitors.
+*   Do not argue with the user or override policies.
+*   If multiple people are speaking, focus on the clearest voice.
+*   If you encounter a platform error, apologize briefly and retry. If the error persists, offer to connect the user to a human agent.
+*   If the user is abusive, politely end the conversation.
+
+""",
         speech_config=types.SpeechConfig(
             language_code=language_code_to_use
         ),
@@ -246,7 +304,8 @@ async def websocket_endpoint():
                                 # print(f"Quart Backend: Sending text prompt to Gemini: '{prompt_for_gemini}'")
                                 user_content_for_text = types.Content(
                                     role="user",
-                                    parts=[types.Part(text=prompt_for_gemini)]
+                                    parts=[types.Part(
+                                        text=prompt_for_gemini)]
                                 )
                                 await session.send_client_content(turns=user_content_for_text)
                                 # print(f"Quart Backend: Prompt '{prompt_for_gemini}' sent to Gemini.")
@@ -275,11 +334,11 @@ async def websocket_endpoint():
                             print("INFO: Client closed the connection.")
                             active_processing = False
                             break
-                except Exception as e_fwd_outer:
-                    print(
-                        f"Quart Backend: Outer error in handle_client_input_and_forward: {type(e_fwd_outer).__name__}: {e_fwd_outer}")
-                    traceback.print_exc()
-                    active_processing = False  # Ensure outer errors also stop processing
+                        except Exception as e_fwd_outer:
+                            print(
+                                f"Quart Backend: Outer error in handle_client_input_and_forward: {type(e_fwd_outer).__name__}: {e_fwd_outer}")
+                            traceback.print_exc()
+                            active_processing = False  # Ensure outer errors also stop processing
                 finally:
                     # print("Quart Backend: Stopped handling client input.")
                     active_processing = False  # Ensure graceful shutdown of the other task
@@ -354,9 +413,9 @@ async def websocket_endpoint():
 
                                 # User Input Processing
                                 if response.server_content and hasattr(response.server_content, 'input_transcription') and \
-                                   response.server_content.input_transcription and \
-                                   hasattr(response.server_content.input_transcription, 'text') and \
-                                   response.server_content.input_transcription.text:  # Ensure text is not empty
+                                        response.server_content.input_transcription and \
+                                        hasattr(response.server_content.input_transcription, 'text') and \
+                                        response.server_content.input_transcription.text:  # Ensure text is not empty
 
                                     user_speech_chunk = response.server_content.input_transcription.text
 
@@ -386,9 +445,9 @@ async def websocket_endpoint():
 
                                 # Model Output Processing
                                 if response.server_content and hasattr(response.server_content, 'output_transcription') and \
-                                   response.server_content.output_transcription and \
-                                   hasattr(response.server_content.output_transcription, 'text') and \
-                                   response.server_content.output_transcription.text:
+                                        response.server_content.output_transcription and \
+                                        hasattr(response.server_content.output_transcription, 'text') and \
+                                        response.server_content.output_transcription.text:
 
                                     if current_model_utterance_id is None:
                                         current_model_utterance_id = str(
@@ -416,7 +475,7 @@ async def websocket_endpoint():
 
                                 # Handling Model Generation Completion
                                 if response.server_content and hasattr(response.server_content, 'generation_complete') and \
-                                   response.server_content.generation_complete == True:
+                                        response.server_content.generation_complete == True:
                                     if current_model_utterance_id and accumulated_model_speech_text:  # Ensure there was a model utterance
                                         payload = {
                                             'id': current_model_utterance_id,
@@ -438,7 +497,7 @@ async def websocket_endpoint():
 
                                 # Handling Turn Completion (Finalizing User Speech)
                                 if response.server_content and hasattr(response.server_content, 'turn_complete') and \
-                                   response.server_content.turn_complete == True:
+                                        response.server_content.turn_complete == True:
                                     if current_user_utterance_id and accumulated_user_speech_text:  # Ensure there was a user utterance
                                         payload = {
                                             'id': current_user_utterance_id,
@@ -465,12 +524,12 @@ async def websocket_endpoint():
 
                                 # Fallback for other potential text or error structures (simplified)
                                 is_transcription_related = (hasattr(response.server_content, 'input_transcription') and response.server_content.input_transcription) or \
-                                    (hasattr(response.server_content, 'output_transcription')
-                                     and response.server_content.output_transcription)
+                                                           (hasattr(response.server_content, 'output_transcription')
+                                                            and response.server_content.output_transcription)
                                 is_control_signal = (hasattr(response.server_content, 'generation_complete') and response.server_content.generation_complete) or \
-                                                    (hasattr(response.server_content, 'turn_complete') and response.server_content.turn_complete) or \
-                                                    (hasattr(
-                                                        response.server_content, 'interrupted') and response.server_content.interrupted)
+                                                   (hasattr(response.server_content, 'turn_complete') and response.server_content.turn_complete) or\
+                                                   (hasattr(
+                                                       response.server_content, 'interrupted') and response.server_content.interrupted)
 
                                 if not response.data and not is_transcription_related and not is_control_signal:
                                     unhandled_text = None
@@ -559,13 +618,13 @@ async def websocket_endpoint():
                                 except Exception as send_exc:
                                     print(
                                         f"Quart Backend: Error sending Gemini error to client WebSocket: {type(send_exc).__name__}: {send_exc}")
-                                active_processing = False
-                                break
+                                    active_processing = False
+                                    break
 
                             # Removed the separate turn_complete log here as it's handled above with user speech sending.
 
-                        if not active_processing:
-                            break
+                            if not active_processing:
+                                break
 
                         if not had_gemini_activity_in_this_iteration and active_processing:
                             await asyncio.sleep(0.1)
